@@ -3,6 +3,13 @@ http://localhost:8899/mapa.html
 
 git push -u origin  debug-gbu
 
+curl http://localhost:9090
+curl http://localhost:9090/
+curl http://localhost:9090/internal/
+DELETE http://localhost:9090/internal/int_data%20copy.txt
+curl -X DELETE http://localhost:9090/txt.txt
+
+
 
 
 asdasqwe

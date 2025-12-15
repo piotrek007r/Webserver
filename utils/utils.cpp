@@ -11,7 +11,7 @@ std::string inputCheck(int argc, char **argv)
     std::string filePath;
 
         if (argc == 1)
-            filePath = "configReader/conf/default.conf";
+            filePath = "conf/default.conf";
         else if (argc == 2)
             filePath = argv[1];
         else

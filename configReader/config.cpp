@@ -186,7 +186,7 @@ LocationConfig Config::getMergedLocationConfig(
     if (merged.allow_methods.empty()) 
         merged.allow_methods = server.allow_methods;
     
-    if (merged.index.empty()) 
+    if (merged.index.empty() && !server.autoindex) 
         merged.index = server.index;
     
     if (merged.root.empty()) 

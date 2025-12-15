@@ -208,35 +208,42 @@ void Http::getResponseBuilder() {
         cleanPath = cleanPath.substr(0, queryPos);
     }
     
-    cleanPath = cleanPath.empty() ? "/" : cleanPath;
-    if (cleanPath == "/") {
-        handleRootPath();
-        return;
-    }
-    
     std::string test1 = _myConfig.location_path;
     std::string filePath = cleanPath;
     if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
         filePath = cleanPath.substr(_myConfig.location_path.length());
     }
 
-    if (filePath.empty() || filePath == "/") {
-        handleRootPath();
-        return;
-    }
-
-    std::string fullPath = _myConfig.root + filePath;
+    // std::string fullPath = _myConfig.root + filePath;
+    std::string fullPath = _myConfig.root;
     
-    if (!resourceExists(fullPath)) {
+    std::cout << "Handling GET for filePath: " << filePath << std::endl;
+    if (resourceExists(fullPath)) {
+        if (isDirectory(fullPath) && !filePath.empty() && _myConfig.index.empty()) {
+            std::cout << "Serving directory: " << filePath << std::endl;
+            handleDirectory(fullPath, cleanPath);
+        } else if (isFile(fullPath)) {
+            std::cout << "Serving file: " << filePath << std::endl;
+            handleFile(fullPath);
+        } else {
+            std::cout << "Serving static file: " << filePath << std::endl;
+            if (fullPath[fullPath.length() - 1] != '/')
+                fullPath += "/";
+            handleFile(fullPath + _myConfig.index);
+        }
+    } else {
+        std::cout << "File not found: " << filePath << std::endl;
         sendError(404);
         return;
     }
-    
-    if (isDirectory(fullPath)) {
-        handleDirectory(fullPath, cleanPath);
-    } else {
-        handleFile(fullPath);
+}
+
+bool Http::isFile(const std::string& path) {
+    struct stat buffer;
+    if (stat(path.c_str(), &buffer) != 0) {
+        return false;
     }
+    return S_ISREG(buffer.st_mode);
 }
 
 bool Http::isDirectory(const std::string& path) {
@@ -244,7 +251,8 @@ bool Http::isDirectory(const std::string& path) {
     if (stat(path.c_str(), &buffer) != 0) {
         return false;
     }
-    return S_ISDIR(buffer.st_mode);
+    bool isDir = S_ISDIR(buffer.st_mode);
+    return isDir;
 }
 
 void Http::sendError(int errorCode) {
@@ -423,25 +431,24 @@ void Http::handleRootPath() {
 }
 
 void Http::handleDirectory(const std::string& dirPath, const std::string& urlPath) {
-    if (urlPath[urlPath.length() - 1] != '/') {
-        sendRedirect(urlPath + "/", 301);
-        return;
-    }
+    // if (urlPath[urlPath.length() - 1] != '/') {
+    //     sendRedirect(urlPath + "/", 301);
+    //     return;
+    // }
     
-    if (!_myConfig.index.empty()) {
-        std::string indexPath = dirPath + "/" + _myConfig.index;
-        
-        if (resourceExists(indexPath)) {
-            handleFile(indexPath);
-            return;
-        }
-    }
-    
-    if (_myConfig.autoindex) {
-        generateDirectoryListing(dirPath);
-    } else {
-        sendError(403);
-    }
+    // if (!_myConfig.index.empty()) {
+    //     std::string indexPath = dirPath + "/" + _myConfig.index;
+    //     if (resourceExists(indexPath)) {
+    //         handleFile(indexPath);
+    //         return;
+    //     }
+    // }
+    // if (urlPath[urlPath.length() - 1] == '/' && _myConfig.autoindex) {
+    (void)urlPath; // Unused parameter
+    generateDirectoryListing(dirPath);
+    // } else {
+    //     sendError(403);
+    // }
 }
 
 
@@ -547,11 +554,22 @@ void Http::deleteResponseBuilder() {
     std::string filePath = cleanPath;
     if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
         filePath = cleanPath.substr(_myConfig.location_path.length());
+        // Remove leading slash after location path
+        if (!filePath.empty() && filePath[0] == '/') {
+            filePath = filePath.substr(1);
+        }
     }
     
-    std::string fullPath = _myConfig.root + filePath;
+    std::string fullPath = _myConfig.upload_dir + cleanPath;
+    // if (!fullPath.empty() && fullPath[fullPath.length() - 1] != '/') {
+    //     fullPath += "/";
+    // }
+    // fullPath += filePath;
+    
+    std::cout << YELLOW << "DELETE fullPath: '" << fullPath << "'" << RESET << std::endl;
     
     if (!resourceExists(fullPath)) {
+        std::cout << RED << "DELETE 404: file not found" << RESET << std::endl;
         sendError(404);
         return;
     }
@@ -570,7 +588,7 @@ void Http::deleteFile(const std::string& filePath) {
         return;
     }
     
-    if (filePath.find(_myConfig.root) != 0) {
+    if (filePath.find(_myConfig.upload_dir) != 0) {
         sendError(403); 
         return;
     }
@@ -587,6 +605,8 @@ void Http::deleteFile(const std::string& filePath) {
     
     std::ostringstream response;
     response << "HTTP/1.1 204 No Content\r\n"
+             << "Access-Control-Allow-Origin: *\r\n"
+             << "Access-Control-Allow-Methods: GET, POST, DELETE\r\n"
              << "Connection: close\r\n"
              << "\r\n";
     
@@ -617,6 +637,8 @@ void Http::deleteDirectory(const std::string& dirPath) {
     
     std::ostringstream response;
     response << "HTTP/1.1 204 No Content\r\n"
+             << "Access-Control-Allow-Origin: *\r\n"
+             << "Access-Control-Allow-Methods: GET, POST, DELETE\r\n"
              << "Connection: close\r\n"
              << "\r\n";
     
