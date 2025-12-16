@@ -25,36 +25,54 @@
 	<main>
 
 		<!-- GET -->
-				<section class="card" id="get-card">
-					<h2>GET</h2>
-					<div class="row">
-						<input id="get-url" type="text" value="/internal/int_data.txt" placeholder="/internal/int_data.txt" />
-						<button class="btn" id="btn-get">GET</button>
-					</div>
-					<div id="get-resp" class="response" hidden></div>
-				</section>
+		<section class="card" id="get-card">
+			<h2>GET</h2>
+			<div class="row">
+				<input id="get-url" type="text" value="/" placeholder="/index.html" />
+				<button class="btn" id="btn-get">GET</button>
+			</div>
+			<div id="get-resp" class="response" hidden></div>
+		</section>
 
+		
 		<!-- POST (upload) -->
-				<section class="card" id="post-card">
-					<h2>POST</h2>
-					<input id="file" type="file" />
-					<div class="row" style="margin-top:8px">
-						<button class="btn" id="btn-post">Upload</button>
-						<button class="btn secondary" id="btn-post-text">Send text</button>
-					</div>
-					<div id="post-resp" class="response" hidden></div>
-				</section>
+		<section class="card" id="post-card">
+			<h2>POST</h2>
+			<input id="file-post" type="file" />
+			<div class="row" style="margin-top:8px">
+				<input id="post-url" type="text" value="" placeholder="Location (optional)"/>
+			</div>
+			<div class="row" style="margin-top:8px">
+				<button class="btn" id="btn-post">Upload</button>
+				<button class="btn secondary" id="btn-post-text">Send text</button>
+			</div>
+			<div id="post-resp" class="response" hidden></div>
+		</section>
+		
+		<!-- PUT -->
+		<section class="card" id="put-card">
+			<h2>PUT</h2>
+			<input id="file-put" type="file" />
+			<div class="row" style="margin-top:8px">
+				<input id="put-url" type="text" value="" placeholder="Location (optional)"/>
+			</div>
+			<div class="row" style="margin-top:8px">
+				<button class="btn" id="btn-put">Upload</button>
+				<button class="btn secondary" id="btn-put-text">Send text</button>
+			</div>
+			<div id="put-resp" class="response" hidden></div>
+		</section>
 
 		<!-- DELETE -->
-				<section class="card" id="delete-card">
-					<h2>DELETE</h2>
-					<div class="row">
-						<input id="del-url" type="text" value="" placeholder="" />
-						<button class="btn danger" id="btn-del">DELETE</button>
-					</div>
-					<div id="del-listing" class="response" hidden></div>
-					<div id="del-resp" class="response" hidden></div>
-				</section>
+		<section class="card" id="delete-card">
+			<h2>DELETE</h2>
+			<div class="row">
+				<input id="del-url" type="text" value="" placeholder="File name to delete" />
+				<button class="btn danger" id="btn-del">DELETE</button>
+			</div>
+			<div id="del-listing" class="response" hidden></div>
+			<div id="del-resp" class="response" hidden></div>
+		</section>
 
 	</main>
 
@@ -64,8 +82,6 @@
 			el.className = 'response ' + (ok ? 'ok' : 'err');
 			el.innerHTML = '';
 			
-			el.appendChild(document.createTextNode(text));
-
 			const br = document.createElement('br');
 			const btn = document.createElement('button');
 			btn.type = 'button';
@@ -74,9 +90,10 @@
 			btn.addEventListener('click', () => {
 				el.hidden = true; 
 			});
-			el.appendChild(br);
 			el.appendChild(btn);
-    
+			el.appendChild(br);
+
+			el.appendChild(document.createTextNode(text));
 }
 
 		async function loadDeleteListing() {
@@ -150,7 +167,7 @@
 
 		// POST (upload file)
 		document.getElementById('btn-post').addEventListener('click', async () => {
-			const fileInput = document.getElementById('file');
+			const fileInput = document.getElementById('file-post');
 			const respBox = document.getElementById('post-resp');
 					if (!fileInput.files || !fileInput.files.length) {
 						return showResp(respBox, false, 'Pick a file to upload.');
@@ -158,7 +175,7 @@
 			const form = new FormData();
 			form.append('file', fileInput.files[0]);
 			try {
-				const res = await fetch('/internal', { method: 'POST', body: form });
+				const res = await fetch('/', { method: 'POST', body: form });
 				const body = await res.text();
 				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
 			} catch (e) {
@@ -169,16 +186,60 @@
 		// POST (simple text as multipart)
 		document.getElementById('btn-post-text').addEventListener('click', async () => {
 			const respBox = document.getElementById('post-resp');
+			const location  = document.getElementById('post-url').value.trim();
 			const form = new FormData();
 			form.append('note', new Blob([`Demo upload ${new Date().toISOString()}`], { type: 'text/plain' }), 'note.txt');
 			try {
 				console.log('Sending POST request...');
-				const res = await fetch('/internal', { method: 'POST', body: form });
+				const res = await fetch(location, { method: 'POST', body: form });
 				console.log('Response received:', res.status, res.statusText);
 				const body = await res.text();
 				console.log('Body received:', body.substring(0, 100));
 				if (res.status == 201) {
-					showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n${body}\n\r Refresh page for new listing in DELETE section.`);
+					showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n${body}\n\r\n\r Refresh page for new listing in DELETE section.`);
+				}
+				else {
+					showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n${body}`);
+				}
+			} catch (e) {
+				console.error('Fetch error:', e);
+				showResp(respBox, false, `Error: ${e.message}`);
+			}
+		});
+
+
+		// PUT (upload file)
+		document.getElementById('btn-put').addEventListener('click', async () => {
+			const fileInput = document.getElementById('file-put');
+			const location  = document.getElementById('put-url').value.trim();
+			const respBox = document.getElementById('put-resp');
+					if (!fileInput.files || !fileInput.files.length) {
+						return showResp(respBox, false, 'Pick a file to upload.');
+			}
+			const form = new FormData();
+			form.append('file', fileInput.files[0]);
+			try {
+				const res = await fetch(location, { method: 'PUT', body: form });
+				const body = await res.text();
+				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
+			} catch (e) {
+						showResp(respBox, false, `Error: ${e.message}`);
+			}
+		});
+
+		// PUT (simple text as multipart)
+		document.getElementById('btn-put-text').addEventListener('click', async () => {
+			const respBox = document.getElementById('put-resp');
+			const form = new FormData();
+			form.append('note', new Blob([`Demo upload ${new Date().toISOString()}`], { type: 'text/plain' }), 'note.txt');
+			try {
+				console.log('Sending PUT request...');
+				const res = await fetch('/internal', { method: 'PUT', body: form });
+				console.log('Response received:', res.status, res.statusText);
+				const body = await res.text();
+				console.log('Body received:', body.substring(0, 100));
+				if (res.status == 201) {
+					showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n${body}\n\r\n\r Refresh page for new listing in DELETE section.`);
 				}
 				else {
 					showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n${body}`);
@@ -197,7 +258,7 @@
 			try {
 				const res = await fetch(url, { method: 'DELETE' });
 				const body = await res.text();
-				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body} \n\r Refresh for new listing`);
+				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body} \n\r\n\r Refresh for new listing`);
 			} catch (e) {
 						showResp(respBox, false, `Error: ${e.message}`);
 			}

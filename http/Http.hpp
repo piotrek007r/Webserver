@@ -106,7 +106,7 @@ class Http {
         LocationConfig getMyConfig();
         bool isCGI();
         void handleRootPath();
-        void handleDirectory(const std::string& dirPath, const std::string& urlPath);
+        // void handleDirectory(const std::string& dirPath, const std::string& urlPath);
         void sendRedirect(const std::string& url, int code);
         bool resourceExists(const std::string& path);
         void sendError(int errorCode);
@@ -124,6 +124,7 @@ class Http {
         void getResponseBuilder();
         void postResponseBuilder();
         void deleteResponseBuilder();
+        void putResponseBuilder();
         
     public:
 
