@@ -31,10 +31,10 @@ Http::Http (std::string &rawRequest, ServerConfig serverData){
 
     _rawRequestPtr = &rawRequest;
     _serverData = serverData;
-
+    
+    requestBilder(rawRequest);
 
     // Get location-specific configuration
-    requestBilder(rawRequest);
     // _myConfig = 0;
     _myConfig = getMyConfig();
     
@@ -55,6 +55,16 @@ Http::Http (std::string &rawRequest, ServerConfig serverData){
 void Http::requestBilder(std::string &rawRequest) {
     parseRequest(rawRequest);
     parseHeader();
+    size_t queryPos = _s_requestData._uri.find('?');
+    if (queryPos != std::string::npos) {
+        _s_requestData._queryString =  _s_requestData._uri.substr(queryPos + 1);
+        _s_requestData._fileName = _s_requestData._uri.substr(0, queryPos);
+    }
+    else {
+        _s_requestData._fileName = _s_requestData._uri;
+    }
+    while (_s_requestData._fileName[0] == '/')
+    _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
 }
 
 // Parse HTTP request
@@ -97,7 +107,7 @@ void Http::parseHeader() {
         }
         
         _s_requestData._method = method;
-        _s_requestData._path = path;
+        _s_requestData._uri = path;
         _s_requestData._httpVersion = version;
     }
 
@@ -132,21 +142,8 @@ bool Http::isBodySizeAllowed() {
 
 // Build CGI response
 void Http::cgiResponseBuilder() {
-    std::string cleanPath = _s_requestData._path;
-    size_t queryPos = cleanPath.find('?');
-    std::string queryString;
-    
-    if (queryPos != std::string::npos) {
-        queryString = cleanPath.substr(queryPos + 1);
-        cleanPath = cleanPath.substr(0, queryPos);
-    }
-    
-    std::string filePath = cleanPath;
-    if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
-        filePath = cleanPath.substr(_myConfig.location_path.length());
-    }
-    
-    std::string scriptPath = _myConfig.root + filePath;
+
+    std::string scriptPath = _myConfig.cgi_path +_s_requestData._fileName;
     
     if (!resourceExists(scriptPath)) {
         sendError(404);
@@ -162,10 +159,10 @@ void Http::cgiResponseBuilder() {
     
     envVars["REQUEST_METHOD"] = _s_requestData._method;
     envVars["SCRIPT_FILENAME"] = scriptPath;
-    envVars["QUERY_STRING"] = queryString;
+    envVars["QUERY_STRING"] = _s_requestData._queryString;
     envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
-    envVars["PATH_INFO"] = filePath;
-    envVars["SCRIPT_NAME"] = cleanPath;
+    envVars["PATH_INFO"] = scriptPath;
+    envVars["SCRIPT_NAME"] = _s_requestData._fileName;
     
     if (!body.empty()) {
         std::ostringstream oss;
@@ -202,39 +199,24 @@ void Http::getResponseBuilder() {
         return;
     }
 
-    std::string cleanPath = _s_requestData._path;
-    size_t queryPos = cleanPath.find('?');
-    if (queryPos != std::string::npos) {
-        cleanPath = cleanPath.substr(0, queryPos);
-    }
+    std::string fullPath = _myConfig.root + _s_requestData._fileName;
     
-    std::string  filePath = cleanPath;
-    
-    std::string test1 = _myConfig.location_path;
-    while (filePath[0] == '/')
-        filePath = filePath.substr(1, filePath.length() - 1); // Remove leading '/'
-    // if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
-    //     filePath = cleanPath.substr(_myConfig.location_path.length());
-    // }
-
-    std::string fullPath = _myConfig.root + filePath;
-    
-    std::cout << "Handling GET for filePath: " << filePath << std::endl;
+    std::cout << "Handling GET for filePath: " << _s_requestData._fileName << std::endl;
     if (resourceExists(fullPath)) {
-        if (isDirectory(fullPath) && filePath.empty() && _myConfig.index.empty()) {
-            std::cout << "Serving directory: " << filePath << std::endl;
+        if (isDirectory(fullPath) && _s_requestData._fileName.empty() && _myConfig.index.empty()) {
+            std::cout << "Serving directory: " << _s_requestData._fileName << std::endl;
             generateDirectoryListing(fullPath);
         } else if (isFile(fullPath)) {
-            std::cout << "Serving file: " << filePath << std::endl;
+            std::cout << "Serving file: " << _s_requestData._fileName << std::endl;
             handleFile(fullPath);
         } else {
-            std::cout << "Serving static file: " << filePath << std::endl;
+            std::cout << "Serving static file: " << _s_requestData._fileName << std::endl;
             if (fullPath[fullPath.length() - 1] != '/')
                 fullPath += "/";
             handleFile(fullPath + _myConfig.index);
         }
     } else {
-        std::cout << "File not found: " << filePath << std::endl;
+        std::cout << "File not found: " << _s_requestData._fileName << std::endl;
         sendError(404);
         return;
     }
@@ -372,10 +354,10 @@ void Http::generateDirectoryListing(const std::string& dirPath) {
     }
     
     std::ostringstream html;
-    html << "<html>\n<head>\n<title>Index of " << _s_requestData._path << "</title>\n</head>\n"
-         << "<body>\n<h1>Index of " << _s_requestData._path << "</h1>\n<hr>\n<ul>\n";
+    html << "<html>\n<head>\n<title>Index of " << _s_requestData._uri << "</title>\n</head>\n"
+         << "<body>\n<h1>Index of " << _s_requestData._uri << "</h1>\n<hr>\n<ul>\n";
     
-    if (_s_requestData._path != "/") {
+    if (_s_requestData._uri != "/") {
         html << "<li><a href=\"..\">../</a></li>\n";
     }
     
@@ -481,15 +463,6 @@ void Http::putResponseBuilder() {
 
     std::string fullPath = _myConfig.upload_dir + "/" + mf.filename;
 
-    // {
-    //     int probe = open(fullPath.c_str(), O_RDONLY);
-    //     if (probe != -1) {
-    //         close(probe);
-    //         std::ostringstream oss;
-    //         oss << _myConfig.upload_dir << "/" << std::time(NULL) << "_" << mf.filename;
-    //         fullPath = oss.str();
-    //     }
-    // }
     int code;
     int fd = 0;     // = open(fullPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     fd = open(fullPath.c_str(), O_WRONLY | O_TRUNC, 0644);
@@ -629,27 +602,8 @@ void Http::postResponseBuilder() {
 
 // Build DELETE response
 void Http::deleteResponseBuilder() {
-    std::string cleanPath = _s_requestData._path;
-    size_t queryPos = cleanPath.find('?');
-    if (queryPos != std::string::npos) {
-        cleanPath = cleanPath.substr(0, queryPos);
-    }
-    
-    std::string filePath = cleanPath;
-    if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
-        filePath = cleanPath.substr(_myConfig.location_path.length());
-        // Remove leading slash after location path
-        if (!filePath.empty() && filePath[0] == '/') {
-            filePath = filePath.substr(1);
-        }
-    }
-    
-    std::string fullPath = _myConfig.upload_dir + cleanPath;
-    // if (!fullPath.empty() && fullPath[fullPath.length() - 1] != '/') {
-    //     fullPath += "/";
-    // }
-    // fullPath += filePath;
-    
+    std::string fullPath = _myConfig.upload_dir + _s_requestData._fileName;
+ 
     std::cout << YELLOW << "DELETE fullPath: '" << fullPath << "'" << RESET << std::endl;
     
     if (!resourceExists(fullPath) || fullPath == (  _myConfig.upload_dir + "/") ) {
@@ -689,8 +643,13 @@ void Http::deleteFile(const std::string& filePath) {
     
     std::ostringstream response;
     response << "HTTP/1.1 204 No Content\r\n"
-             << "Access-Control-Allow-Origin: *\r\n"
-            //  << "Access-Control-Allow-Methods: GET, POST, DELETE\r\n"
+             << "Access-Control-Allow-Origin: *\r\n";
+    
+    for (size_t i = 0; i < _myConfig.allow_methods.size(); ++i) {
+        if (i != 0) response << ", ";
+        response << _myConfig.allow_methods[i];
+    }
+    response << "\r\n"
              << "Connection: close\r\n"
              << "\r\n";
     
@@ -699,7 +658,7 @@ void Http::deleteFile(const std::string& filePath) {
 }
 
 void Http::deleteDirectory(const std::string& dirPath) {
-    std::string urlPath = _s_requestData._path;
+    std::string urlPath = _s_requestData._uri;
     if (urlPath[urlPath.length() - 1] != '/') {
         sendError(409); 
         return;
@@ -735,12 +694,12 @@ bool Http::isCGI() {
         return false;
     }
     
-    size_t dotPos = _s_requestData._path.rfind('.');
+    size_t dotPos = _s_requestData._uri.rfind('.');
     if (dotPos == std::string::npos) {
         return false;
     }
     
-    std::string extension = _s_requestData._path.substr(dotPos);
+    std::string extension = _s_requestData._uri.substr(dotPos);
     
     return (extension == _myConfig.cgi_ext);
 }
@@ -756,7 +715,7 @@ bool Http::isMethodAllowed() {
 
 void Http::responseBuilder() {
 
-    if (_s_requestData._path == "/favicon.ico") {
+    if (_s_requestData._uri == "/favicon.ico") {
         _s_responseData._response = "HTTP/1.1 204 No Content\r\n"
                                    "Connection: close\r\n"
                                    "\r\n";
@@ -818,10 +777,10 @@ LocationConfig Http::getMyConfig() {
     
     for (std::map<std::string, LocationConfig>::iterator it = _serverData.locations.begin();
          it != _serverData.locations.end(); ++it) {
-        if (_s_requestData._path.find(it->first) == 0) {
+        if (_s_requestData._uri.find(it->first) == 0) {
             myConfig = Config::getMergedLocationConfig(_serverData, it->second);
             locationFound = true;
-            _s_requestData._path = _s_requestData._path.substr(it->first.length());
+            _s_requestData._fileName = _s_requestData._uri.substr(it->first.length());
             break;
         }
     }

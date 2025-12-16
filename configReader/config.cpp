@@ -69,6 +69,8 @@ void Config::parseLines(std::ifstream& file) {
         else if (key == "error_page") {
             int code; std::string val; 
             iss >> code >> val;
+            if (val[val.length() - 1] != '/')
+                val = val + "/";
             if (inLocation)
                 currentLocation.error_pages[code] = val;
             else
@@ -102,6 +104,8 @@ void Config::parseLines(std::ifstream& file) {
         }
         else if (key == "upload") {
             std::string upload_dir; iss >> upload_dir;
+            if (upload_dir[upload_dir.length() - 1] != '/')
+                upload_dir = upload_dir + "/";
             if (inLocation)
                 currentLocation.upload_dir = upload_dir;
             else
@@ -109,6 +113,8 @@ void Config::parseLines(std::ifstream& file) {
         }
         else if (key == "cgi_path") {
             std::string cgi_path; iss >> cgi_path;
+            if (cgi_path[cgi_path.length() - 1] != '/')
+                cgi_path = cgi_path + "/";
             if (inLocation)
                 currentLocation.cgi_path = cgi_path;
             else
@@ -123,6 +129,8 @@ void Config::parseLines(std::ifstream& file) {
         }
         else if (key == "root") {
             std::string r; iss >> r;
+            if(r[r.length() - 1] != '/')
+                r = r + "/";
             if (inLocation)
                 currentLocation.root = r;
             else
