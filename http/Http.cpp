@@ -37,6 +37,16 @@ Http::Http (std::string &rawRequest, ServerConfig serverData){
     // Get location-specific configuration
     // _myConfig = 0;
     _myConfig = getMyConfig();
+        size_t queryPos = _s_requestData._request.find('?');
+    if (queryPos != std::string::npos) {
+        _s_requestData._queryString =  _s_requestData._request.substr(queryPos + 1);
+        _s_requestData._fileName = _s_requestData._request.substr(0, queryPos);
+    }
+    else {
+        _s_requestData._fileName = _s_requestData._request;
+    }
+    while (_s_requestData._fileName[0] == '/')
+    _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
     
     // Debug - sprawdź wartości po getMyConfig()
     std::cout << YELLOW << "DEBUG _myConfig.has_redirect: " << _myConfig.has_redirect << RESET << std::endl;
@@ -55,16 +65,6 @@ Http::Http (std::string &rawRequest, ServerConfig serverData){
 void Http::requestBilder(std::string &rawRequest) {
     parseRequest(rawRequest);
     parseHeader();
-    size_t queryPos = _s_requestData._uri.find('?');
-    if (queryPos != std::string::npos) {
-        _s_requestData._queryString =  _s_requestData._uri.substr(queryPos + 1);
-        _s_requestData._fileName = _s_requestData._uri.substr(0, queryPos);
-    }
-    else {
-        _s_requestData._fileName = _s_requestData._uri;
-    }
-    while (_s_requestData._fileName[0] == '/')
-    _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
 }
 
 // Parse HTTP request
@@ -248,7 +248,8 @@ void Http::sendError(int errorCode) {
 
 
 bool Http::resourceExists(const std::string& path) {
-    return (access(path.c_str(), F_OK) == 0);
+    bool exists = access(path.c_str(), F_OK) == 0;
+    return exists;
 }
 
 void Http::sendRedirect(const std::string& newLocation, int code) {
@@ -780,7 +781,7 @@ LocationConfig Http::getMyConfig() {
         if (_s_requestData._uri.find(it->first) == 0) {
             myConfig = Config::getMergedLocationConfig(_serverData, it->second);
             locationFound = true;
-            _s_requestData._fileName = _s_requestData._uri.substr(it->first.length());
+            _s_requestData._request = _s_requestData._uri.substr(it->first.length());
             break;
         }
     }

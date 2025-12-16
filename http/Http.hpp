@@ -50,6 +50,7 @@ class Http {
             std::vector<std::string> _allowedMethods;
             std::string _rawHeader;
             std::string _uri;
+            std::string _request;
             std::string _queryString;
             std::string  _fileName;
             std::string _httpVersion;
