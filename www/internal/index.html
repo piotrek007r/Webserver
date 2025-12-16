@@ -177,7 +177,12 @@
 				console.log('Response received:', res.status, res.statusText);
 				const body = await res.text();
 				console.log('Body received:', body.substring(0, 100));
-				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
+				if (res.status == 201) {
+					showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n${body}\n\r Refresh page for new listing in DELETE section.`);
+				}
+				else {
+					showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n${body}`);
+				}
 			} catch (e) {
 				console.error('Fetch error:', e);
 				showResp(respBox, false, `Error: ${e.message}`);
@@ -192,7 +197,7 @@
 			try {
 				const res = await fetch(url, { method: 'DELETE' });
 				const body = await res.text();
-				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
+				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body} \n\r Refresh for new listing`);
 			} catch (e) {
 						showResp(respBox, false, `Error: ${e.message}`);
 			}

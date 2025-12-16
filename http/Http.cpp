@@ -208,18 +208,20 @@ void Http::getResponseBuilder() {
         cleanPath = cleanPath.substr(0, queryPos);
     }
     
+    std::string filePath;
+    
     std::string test1 = _myConfig.location_path;
-    std::string filePath = cleanPath;
-    if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
-        filePath = cleanPath.substr(_myConfig.location_path.length());
-    }
+    if (cleanPath[0] == '/')
+        filePath = cleanPath.substr(1, cleanPath.length() - 1); // Remove leading '/'
+    // if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
+    //     filePath = cleanPath.substr(_myConfig.location_path.length());
+    // }
 
-    // std::string fullPath = _myConfig.root + filePath;
-    std::string fullPath = _myConfig.root;
+    std::string fullPath = _myConfig.root + filePath;
     
     std::cout << "Handling GET for filePath: " << filePath << std::endl;
     if (resourceExists(fullPath)) {
-        if (isDirectory(fullPath) && !filePath.empty() && _myConfig.index.empty()) {
+        if (isDirectory(fullPath) && filePath.empty() && _myConfig.index.empty()) {
             std::cout << "Serving directory: " << filePath << std::endl;
             handleDirectory(fullPath, cleanPath);
         } else if (isFile(fullPath)) {
@@ -568,7 +570,7 @@ void Http::deleteResponseBuilder() {
     
     std::cout << YELLOW << "DELETE fullPath: '" << fullPath << "'" << RESET << std::endl;
     
-    if (!resourceExists(fullPath)) {
+    if (!resourceExists(fullPath) || fullPath == (  _myConfig.upload_dir + "/") ) {
         std::cout << RED << "DELETE 404: file not found" << RESET << std::endl;
         sendError(404);
         return;
@@ -735,6 +737,7 @@ LocationConfig Http::getMyConfig() {
         if (_s_requestData._path.find(it->first) == 0) {
             myConfig = Config::getMergedLocationConfig(_serverData, it->second);
             locationFound = true;
+            _s_requestData._path = _s_requestData._path.substr(it->first.length());
             break;
         }
     }
