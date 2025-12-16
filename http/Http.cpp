@@ -208,11 +208,11 @@ void Http::getResponseBuilder() {
         cleanPath = cleanPath.substr(0, queryPos);
     }
     
-    std::string filePath;
+    std::string  filePath = cleanPath;
     
     std::string test1 = _myConfig.location_path;
-    if (cleanPath[0] == '/')
-        filePath = cleanPath.substr(1, cleanPath.length() - 1); // Remove leading '/'
+    while (filePath[0] == '/')
+        filePath = filePath.substr(1, filePath.length() - 1); // Remove leading '/'
     // if (!_myConfig.location_path.empty() && cleanPath.find(_myConfig.location_path) == 0) {
     //     filePath = cleanPath.substr(_myConfig.location_path.length());
     // }
@@ -223,7 +223,7 @@ void Http::getResponseBuilder() {
     if (resourceExists(fullPath)) {
         if (isDirectory(fullPath) && filePath.empty() && _myConfig.index.empty()) {
             std::cout << "Serving directory: " << filePath << std::endl;
-            handleDirectory(fullPath, cleanPath);
+            generateDirectoryListing(fullPath);
         } else if (isFile(fullPath)) {
             std::cout << "Serving file: " << filePath << std::endl;
             handleFile(fullPath);
@@ -432,25 +432,107 @@ void Http::handleRootPath() {
     }
 }
 
-void Http::handleDirectory(const std::string& dirPath, const std::string& urlPath) {
-    // if (urlPath[urlPath.length() - 1] != '/') {
-    //     sendRedirect(urlPath + "/", 301);
-    //     return;
-    // }
-    
-    // if (!_myConfig.index.empty()) {
-    //     std::string indexPath = dirPath + "/" + _myConfig.index;
-    //     if (resourceExists(indexPath)) {
-    //         handleFile(indexPath);
-    //         return;
+
+void Http::putResponseBuilder() {
+    if (_rawRequestPtr == NULL) { sendError(400); return; }
+
+    std::string reqBody = _rawRequestPtr->substr(_bodyStart, _bodyLen);
+
+    if (_myConfig.upload_dir.empty()) {
+        std::ostringstream html;
+        html << "<html><body>"
+             << "<h1>PUT Data Received</h1>"
+             << "<p>Content-Length: " << reqBody.size() << " bytes</p>"
+             << "<pre>" << reqBody << "</pre>"
+             << "</body></html>";
+        const std::string respBody = html.str();
+
+        std::ostringstream response;
+        response << "HTTP/1.1 200 OK\r\n"
+                 << "Content-Type: text/html\r\n"
+                 << "Content-Length: " << respBody.size() << "\r\n"
+                 << "Connection: close\r\n"
+                 << "\r\n"
+                 << respBody;
+
+        _s_responseData._response = response.str();
+        _s_responseData._responseStatusCode = 200;
+        return;
+    }
+
+    std::string contentType = "";
+    std::map<std::string, std::string>::iterator it = _s_requestData._headers.find("Content-Type");
+    if (it != _s_requestData._headers.end()) contentType = it->second;
+
+    std::string boundary;
+    if (contentType.find("multipart/form-data") == std::string::npos || !extractBoundary(contentType, boundary)) {
+        sendError(400);
+        return;
+    }
+
+    MultipartFile mf;
+
+    if (!parseMultipartFilePart(reqBody, boundary, mf, "note")) {
+        if (!parseMultipartFilePart(reqBody, boundary, mf, "")) {
+            sendError(400);
+            return;
+        }
+    }
+
+    std::string fullPath = _myConfig.upload_dir + "/" + mf.filename;
+
+    // {
+    //     int probe = open(fullPath.c_str(), O_RDONLY);
+    //     if (probe != -1) {
+    //         close(probe);
+    //         std::ostringstream oss;
+    //         oss << _myConfig.upload_dir << "/" << std::time(NULL) << "_" << mf.filename;
+    //         fullPath = oss.str();
     //     }
     // }
-    // if (urlPath[urlPath.length() - 1] == '/' && _myConfig.autoindex) {
-    (void)urlPath; // Unused parameter
-    generateDirectoryListing(dirPath);
-    // } else {
-    //     sendError(403);
-    // }
+    int code;
+    int fd = 0;     // = open(fullPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    fd = open(fullPath.c_str(), O_WRONLY | O_TRUNC, 0644);
+    if (fd > 2) {
+        code = 200; // updated existing file
+        }
+    else {
+        fd = open(fullPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        code = 201; // created new file
+    }
+    if (fd == -1) {
+        sendError(500);
+        return;
+    }
+
+    ssize_t written = write(fd, mf.data.data(), mf.data.size());
+    close(fd);
+
+    if (written == -1 || static_cast<size_t>(written) != mf.data.size()) {
+        std::remove(fullPath.c_str());
+        sendError(500);
+        return;
+    }
+
+    std::ostringstream html;
+    html << "<html><body>"
+         << "<h1>File Uploaded</h1>"
+         << "<p>Saved as: " << mf.filename << "</p>"
+         << "<p>Bytes: " << mf.data.size() << "</p>"
+         << "</body></html>";
+    const std::string respBody = html.str();
+
+    std::ostringstream response;
+    response << "HTTP/1.1 " << code << (code == 201 ? " Created" : " OK") << "\r\n"
+             << "Content-Type: text/html\r\n"
+             << "Content-Length: " << respBody.size() << "\r\n"
+             << "Connection: close\r\n"
+             << "\r\n"
+             << respBody;
+
+    _s_responseData._response = response.str();
+    _s_responseData._responseStatusCode = code;
+ 
 }
 
 
@@ -528,7 +610,7 @@ void Http::postResponseBuilder() {
     std::ostringstream html;
     html << "<html><body>"
          << "<h1>File Uploaded</h1>"
-         << "<p>Saved as: " << fullPath << "</p>"
+         << "<p>Saved as: " << mf.filename << "</p>"
          << "<p>Bytes: " << mf.data.size() << "</p>"
          << "</body></html>";
     const std::string respBody = html.str();
@@ -608,7 +690,7 @@ void Http::deleteFile(const std::string& filePath) {
     std::ostringstream response;
     response << "HTTP/1.1 204 No Content\r\n"
              << "Access-Control-Allow-Origin: *\r\n"
-             << "Access-Control-Allow-Methods: GET, POST, DELETE\r\n"
+            //  << "Access-Control-Allow-Methods: GET, POST, DELETE\r\n"
              << "Connection: close\r\n"
              << "\r\n";
     
@@ -706,6 +788,8 @@ void Http::responseBuilder() {
         postResponseBuilder();
     } else if (_s_requestData._method == "DELETE") {
         deleteResponseBuilder();
+    } else if (_s_requestData._method == "PUT") {
+        putResponseBuilder();
     } else {
         _s_responseData._hasError = true;
         _s_responseData._responseStatusCode = 501;
