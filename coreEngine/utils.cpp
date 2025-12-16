@@ -33,3 +33,16 @@ std::string CoreEngine::prepareResponse(client &client, size_t el, size_t res)
     std::cout << ORANGE << "--> This is Response: " << object.getResponse().c_str()<< RESET << std::endl;
     return object.getResponse();
 }
+
+long CoreEngine::getTimeStamp(timeval countFrom, timeval compareTime)
+{
+    long start;
+    long current;
+    long timeElapsed;
+
+    start = (countFrom.tv_sec * 1000000) + countFrom.tv_usec;
+    current = (compareTime.tv_sec * 1000000) + compareTime.tv_usec;
+    timeElapsed = current - start;
+
+    return timeElapsed;
+}

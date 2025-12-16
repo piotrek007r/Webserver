@@ -1,10 +1,10 @@
-//Copyright [2025] <Piotr Ruszkiewicz> <pruszkie@student.42warsaw.pl>
+// Copyright [2025] <Piotr Ruszkiewicz> <pruszkie@student.42warsaw.pl>
 
 #include "CoreEngine.hpp"
 #include "../errors/error.hpp"
 
-CoreEngine::CoreEngine(const std::vector<ServerConfig> &serversCfg) : serversCfg(serversCfg), serv(NULL), 
-    lSockNum(0), poolTimeout(1000), pollFDsNum(0), backlogNum(128)
+CoreEngine::CoreEngine(const std::vector<ServerConfig> &serversCfg) : serversCfg(serversCfg), serv(NULL),
+   lSockNum(0), poolTimeout(1000), pollFDsNum(0), backlogNum(128), idleClientTimeout(60)
 {
    memset(&hints, 0, sizeof(sockaddr_in));
    hints.ai_family = AF_UNSPEC;     // for both IP4 & IP6
@@ -18,7 +18,7 @@ void CoreEngine::setSocket(size_t i)
    // socketFD.push_back(socket(serv->ai_family, SOCK_STREAM, 0)); // error check missing
    // release soket from kernel hold, allow to multile use after close
    int FD = socket(serv->ai_family, SOCK_STREAM, 0);
-   if(FD == -1)
+   if (FD == -1)
    {
       std::cerr << "socket() failed: " << strerror(errno) << std::endl;
       return;
@@ -66,14 +66,15 @@ void CoreEngine::coreEngine()
 {
    // this function will be adjusted to data provided after parsing config file
    size_t j = 0;
-   // initializig listeling sockets by every config 
-   for(size_t i = 0; i < serversCfg.size(); i++)
+   // initializig listeling sockets by every config
+   for (size_t i = 0; i < serversCfg.size(); i++)
    {
       int status = getaddrinfo(serversCfg[i].host.c_str(), serversCfg[i].listen_port.c_str(), &hints, &serv);
       if (status != 0)
       {
          std::cerr << "getaddrinfo() failed for server " << i << ": " << gai_strerror(status) << std::endl;
-         if (serv != NULL) {
+         if (serv != NULL)
+         {
             freeaddrinfo(serv);
             serv = NULL;
          }
@@ -86,10 +87,7 @@ void CoreEngine::coreEngine()
          setSocket(j);
          // creating a pararel vector to pollFD just to distiquish listening from client socket
          isClientFD.push_back(false);
-         // serverFDtoIndex[socketFD[j]] = i; // mapowanie server FD -> config index
          lSockNum++;
-         // realloc is nessesary due to dynamics changes to pollfd array, it holds all sockets events data 
-         // pollFDs = (pollfd *)realloc(pollFDs, (lSockNum + 1) * sizeof(pollfd));
          pollfd pfd;
          pfd.fd = socketFD[j];
          pfd.events = POLLIN;
@@ -112,13 +110,17 @@ void CoreEngine::coreEngine()
       {
          for (size_t i = 0; i < pollFDsNum; i++)
          {
-            // std::cout << "Socket: " << pollFDs[i].fd << std::endl;
             // only on listening sockets, after first request
             if ((pollFDs[i].revents & POLLIN) && (i < lSockNum) && !(isClientFD[i]))
+            {
                setConnection(i);
+               gettimeofday(&this->getClientByFD(pollFDs[i].fd).lastAction, NULL);
+            }
             else if (pollFDs[i].revents & POLLIN)
+            {
                recivNClose(i);
-            // std::cout << "socket: " << pollFDs[i].fd << " revent: " << pollFDs[i].revents << std::endl;
+               gettimeofday(&this->getClientByFD(pollFDs[i].fd).lastAction, NULL);
+            }
             if (pollFDs[i].revents & POLLOUT)
                sendToClient(i);
             if (pollFDs[i].revents & POLLHUP) // consider it coz might be unnesesary.
@@ -136,6 +138,18 @@ void CoreEngine::coreEngine()
             }
          }
       }
-      // usleep(100000);
+      timeval curretAction;
+      gettimeofday(&curretAction, NULL);
+      long idleIime;
+      for (size_t i = 0; i < pollFDs.size(); i++)
+         if (isClientFD[i])
+         {
+            idleIime = getTimeStamp(this->getClientByFD(pollFDs[i].fd).lastAction, curretAction);
+            if(idleIime > (idleClientTimeout * 1000000))
+            {
+               closeCLient(i);
+               i--;
+            }
+         }
    }
 }
