@@ -111,6 +111,7 @@ class Http {
         bool resourceExists(const std::string& path);
         void sendError(int errorCode);
         bool isDirectory(const std::string& path);
+        bool isFile(const std::string& path);
         void handleFile(const std::string& filePath);
         std::string determineMimeType(const std::string& path);
         void generateDirectoryListing(const std::string& dirPath);
