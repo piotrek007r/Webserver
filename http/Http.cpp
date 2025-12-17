@@ -308,7 +308,7 @@ void Http::handleFile(const std::string& filePath) {
     int fd = open(filePath.c_str(), O_RDONLY);
     
     if (fd == -1) {
-        sendError(403);
+        sendError(404);
         return;
     }
     
