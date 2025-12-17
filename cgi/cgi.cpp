@@ -6,7 +6,7 @@
 /*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/24 13:33:44 by agorski           #+#    #+#             */
-/*   Updated: 2025/12/17 13:47:35 by gbuczyns         ###   ########.fr       */
+/*   Updated: 2025/12/17 14:30:10 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -101,16 +101,31 @@ std::string executeCgi(const std::string& scriptPath,
         waitpid(pid, &status, 0);
         if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
             throw std::runtime_error("CGI Execution Failed");
-            
+        
         std::ostringstream response;
-        response << "HTTP/1.1 200 OK\r\n"
-             << "Content-Length: " << body.length() << "\r\n"
-            //  << "Content-Type: text/html\r\n"
-            << "Content-Type: application/octet-stream\r\n"
-             << "Connection: close\r\n"
-             << "\r\n"
-             << body;
-        // std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " + output.length() + "\r\n\r\n" + output;
+        if (!body.find("\r\n\r\n"))
+            {
+                int bodyLength = body.length() - body.find("\r\n\r\n") - 4;
+                response    << "HTTP/1.1 200 OK\r\n"
+                            << "Content-Length: " << bodyLength << "\r\n"
+                            << body;        
+            }
+        else if (!body.empty())
+        {
+            response << "HTTP/1.1 200 OK\r\n"
+                    << "Content-Length: " << body.length() << "\r\n"
+                    << "Content-Type: text/html\r\n"
+                    << "Content-Type: application/octet-stream\r\n"
+                    << "Connection: close\r\n"
+                    << "\r\n"
+                    << body;
+        }
+        else
+        {
+            response << "HTTP/1.1 204 No Content\r\n"
+                    << "Connection: close\r\n"
+                    << "\r\n";
+        }
         return (response.str());
     }
 }
