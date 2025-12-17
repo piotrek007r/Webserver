@@ -6,7 +6,7 @@
 /*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/24 13:33:44 by agorski           #+#    #+#             */
-/*   Updated: 2025/12/17 12:20:49 by gbuczyns         ###   ########.fr       */
+/*   Updated: 2025/12/17 12:34:09 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -58,16 +58,20 @@ std::string executeCgi(const std::string& scriptPath,
         }
 
         // Execute CGI interpreter
-        char* args[2];
-        args[0] = const_cast<char*>(scriptPath.c_str());
-        args[1] = NULL;
+        // char* args[2];
+        // args[0] = const_cast<char*>(scriptPath.c_str());
+        // args[1] = NULL;
 
+        char* args[3];
 
-        // args[0] = const_cast<char*>(interpreterPath.c_str());
-        // args[1] = const_cast<char*>(scriptPath.c_str());
-        // args[2] = NULL;
+        args[0] = const_cast<char*>(interpreterPath.c_str());
+        args[1] = const_cast<char*>(scriptPath.c_str());
+        args[2] = NULL;
 
-        if (execve(interpreterPath.c_str(), args, NULL) == -1)
+        std::cerr << "About to execve: " << interpreterPath << " " << scriptPath << std::endl;
+        int returnCode = execve(interpreterPath.c_str(), args, NULL);
+        std::cerr << "Execve returned with code: " << returnCode << std::endl;
+        if (returnCode == -1)
             throw std::runtime_error("Execve Error");
     }
     else // Parent process

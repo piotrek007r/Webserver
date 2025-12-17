@@ -19,7 +19,6 @@
 #include <vector>
 #include <sstream>
 #include <vector>
-#include <sys/time.h> 
 
 #include "../configReader/config.hpp"
 #include "../errors/error.hpp"
@@ -33,6 +32,7 @@ private:
             sockaddr_storage clientSockaddr;
             ServerConfig serverCfg;
             std::string sendBuffer;
+            // std::string requestBuffer;
             std::string leftooverBuffer;
             std::vector<std::string> requestBufferVec;
             char inputBuffer[1024];
@@ -40,7 +40,6 @@ private:
             bool hasError;
             int byteRecived;
             int FD;
-            timeval lastAction;
         }; 
         client &getClientByFD(int socketFD);
         void closeCLient(int el);
@@ -57,7 +56,6 @@ private:
         int poolTimeout;   // time interval for poll() checking for event
         size_t pollFDsNum; // number of structs corresponding total number of sockets
         size_t backlogNum; // number of pending connection that listen can hold
-        int idleClientTimeout;
 
     public:
         CoreEngine(const std::vector<ServerConfig> &serverCfg);
@@ -66,7 +64,6 @@ private:
         void recivNClose(size_t i);
         void sendToClient(size_t i);
         void coreEngine();
-        long getTimeStamp(timeval countFrom, timeval compareTime);
 };
 
 #endif
