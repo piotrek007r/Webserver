@@ -69,7 +69,7 @@ void Config::parseLines(std::ifstream& file) {
         else if (key == "error_page") {
             int code; std::string val; 
             iss >> code >> val;
-            if (val[val.length() - 1] != '/')
+            if (val[val.length() - 1] != '/' && !val.empty())
                 val = val + "/";
             if (inLocation)
                 currentLocation.error_pages[code] = val;
@@ -104,7 +104,7 @@ void Config::parseLines(std::ifstream& file) {
         }
         else if (key == "upload") {
             std::string upload_dir; iss >> upload_dir;
-            if (upload_dir[upload_dir.length() - 1] != '/')
+            if (upload_dir[upload_dir.length() - 1] != '/' && !upload_dir.empty())
                 upload_dir = upload_dir + "/";
             if (inLocation)
                 currentLocation.upload_dir = upload_dir;
@@ -113,12 +113,21 @@ void Config::parseLines(std::ifstream& file) {
         }
         else if (key == "cgi_path") {
             std::string cgi_path; iss >> cgi_path;
-            if (cgi_path[cgi_path.length() - 1] != '/')
+            if (cgi_path[cgi_path.length() - 1] != '/' && !cgi_path.empty())
                 cgi_path = cgi_path + "/";
             if (inLocation)
                 currentLocation.cgi_path = cgi_path;
             else
                 currentServer.cgi_path = cgi_path;
+        }
+                else if (key == "scripts_path") {
+            std::string scripts_path; iss >> scripts_path;
+            if (scripts_path[scripts_path.length() - 1] != '/' && !scripts_path.empty())
+                scripts_path = scripts_path + "/";
+            if (inLocation)
+                currentLocation.scripts_path = scripts_path;
+            else
+                currentServer.scripts_path = scripts_path;
         }
         else if (key == "cgi_ext") {
             std::string cgi_ext; iss >> cgi_ext;
@@ -129,7 +138,7 @@ void Config::parseLines(std::ifstream& file) {
         }
         else if (key == "root") {
             std::string r; iss >> r;
-            if(r[r.length() - 1] != '/')
+            if(r[r.length() - 1] != '/' && !r.empty())
                 r = r + "/";
             if (inLocation)
                 currentLocation.root = r;
@@ -205,6 +214,9 @@ LocationConfig Config::getMergedLocationConfig(
     
     if (merged.cgi_path.empty()) 
         merged.cgi_path = server.cgi_path;
+        
+    if (merged.scripts_path.empty()) 
+        merged.scripts_path = server.scripts_path;
     
     if (merged.cgi_ext.empty()) 
         merged.cgi_ext = server.cgi_ext;

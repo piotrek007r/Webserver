@@ -15,6 +15,7 @@ struct LocationConfig {
     std::string index;
     std::string upload_dir;
     std::string cgi_path;
+    std::string scripts_path;
     std::string cgi_ext;
     std::string root;
     bool has_redirect;           // Czy lokacja ma redirect
@@ -35,6 +36,7 @@ struct ServerConfig {
     std::string index;
     std::string upload_dir;
     std::string cgi_path;
+    std::string scripts_path;
     std::string cgi_ext;
     std::string root;
     bool has_redirect;          // Czy lokacja ma redirect
