@@ -10,6 +10,7 @@ void CoreEngine::setConnection(size_t i)
    client.serverCfg = serversCfg[i];
    client.hasError = false;
    client.sendOffset = 0;
+   gettimeofday(&client.lastAction, NULL);
 
    client.FD = accept(pollFDs[i].fd, (struct sockaddr *)&client.clientSockaddr, &addrLen);
    if (client.FD == -1)
@@ -33,6 +34,8 @@ void CoreEngine::setConnection(size_t i)
 void CoreEngine::recivNClose(size_t el)
 {
    client &client = this->getClientByFD(pollFDs[el].fd);
+   gettimeofday(&client.lastAction, NULL);
+
    HttpError errorHandler;
 
    client.byteRecived = recv(pollFDs[el].fd, client.inputBuffer, sizeof(client.inputBuffer), 0);
