@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   cgi.hpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: agorski <agorski@student.42.fr>            +#+  +:+       +#+        */
+/*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/24 13:33:56 by agorski           #+#    #+#             */
-/*   Updated: 2025/11/24 17:42:40 by agorski          ###   ########.fr       */
+/*   Updated: 2025/12/17 13:40:37 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -21,6 +21,7 @@
 #include <cstring>
 #include <iostream>
 #include <cstdlib>
+#include <sstream>
 
 std::string executeCgi(const std::string& scriptPath,
                               const std::string& interpreterPath,

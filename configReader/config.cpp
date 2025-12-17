@@ -69,8 +69,6 @@ void Config::parseLines(std::ifstream& file) {
         else if (key == "error_page") {
             int code; std::string val; 
             iss >> code >> val;
-            if (val[val.length() - 1] != '/' && !val.empty())
-                val = val + "/";
             if (inLocation)
                 currentLocation.error_pages[code] = val;
             else

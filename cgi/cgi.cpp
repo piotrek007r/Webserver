@@ -6,7 +6,7 @@
 /*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/24 13:33:44 by agorski           #+#    #+#             */
-/*   Updated: 2025/12/17 12:34:09 by gbuczyns         ###   ########.fr       */
+/*   Updated: 2025/12/17 13:47:35 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -57,22 +57,21 @@ std::string executeCgi(const std::string& scriptPath,
             setenv(it->first.c_str(), it->second.c_str(), 1); //wedlug pawla nie moge
         }
 
-        // Execute CGI interpreter
-        // char* args[2];
-        // args[0] = const_cast<char*>(scriptPath.c_str());
-        // args[1] = NULL;
+        std::string execPath = interpreterPath;
+        if (!execPath.empty() && execPath[execPath.size() - 1] == '/')
+            execPath.erase(execPath.size() - 1);
 
         char* args[3];
-
-        args[0] = const_cast<char*>(interpreterPath.c_str());
+        args[0] = const_cast<char*>(execPath.c_str());
         args[1] = const_cast<char*>(scriptPath.c_str());
         args[2] = NULL;
 
-        std::cerr << "About to execve: " << interpreterPath << " " << scriptPath << std::endl;
-        int returnCode = execve(interpreterPath.c_str(), args, NULL);
-        std::cerr << "Execve returned with code: " << returnCode << std::endl;
-        if (returnCode == -1)
-            throw std::runtime_error("Execve Error");
+        // std::cerr << "About to execve: " << execPath << " " << scriptPath << std::endl;
+        if (execve(execPath.c_str(), args, environ) == -1)
+        {
+            std::cerr << "execve error: " << std::endl;
+            _exit(127);
+        }
     }
     else // Parent process
     {
@@ -86,13 +85,13 @@ std::string executeCgi(const std::string& scriptPath,
 
         // read CGI output from stdout
         
-        std::string output;
+        std::string body;
         char buffer[4096];
         ssize_t bytesRead;
 
         while ((bytesRead = read(pipeStout[0], buffer, sizeof(buffer))) > 0)
         {
-            output.append(buffer, bytesRead);
+            body.append(buffer, bytesRead);
         }
 
         close(pipeStout[0]);
@@ -102,7 +101,17 @@ std::string executeCgi(const std::string& scriptPath,
         waitpid(pid, &status, 0);
         if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
             throw std::runtime_error("CGI Execution Failed");
-        return "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + output;
+            
+        std::ostringstream response;
+        response << "HTTP/1.1 200 OK\r\n"
+             << "Content-Length: " << body.length() << "\r\n"
+            //  << "Content-Type: text/html\r\n"
+            << "Content-Type: application/octet-stream\r\n"
+             << "Connection: close\r\n"
+             << "\r\n"
+             << body;
+        // std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " + output.length() + "\r\n\r\n" + output;
+        return (response.str());
     }
 }
     catch (const std::exception& e)
