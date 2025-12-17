@@ -10,7 +10,7 @@ TO DO LIST:
 - [x] Add max body size validation (socket layer)
 - [x] CGI
 - [x] HTTP response builder
-- [ ] HTTP pages + .py script
+- [x] HTTP pages + .py script
 - [x] High-level logic (router)
 - [x] Closing sockets
 - [ ] Unit tests

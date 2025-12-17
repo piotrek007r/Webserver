@@ -143,7 +143,7 @@ bool Http::isBodySizeAllowed() {
 // Build CGI response
 void Http::cgiResponseBuilder() {
 
-    std::string scriptPath = _myConfig.cgi_path +_s_requestData._fileName;
+    std::string scriptPath = _myConfig.scripts_path +_s_requestData._fileName;
     
     if (!resourceExists(scriptPath)) {
         sendError(404);
@@ -784,6 +784,8 @@ LocationConfig Http::getMyConfig() {
             _s_requestData._request = _s_requestData._uri.substr(it->first.length());
             break;
         }
+        else 
+            _s_requestData._request = _s_requestData._uri;
     }
     
     if (!locationFound) {

@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   cgi.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: agorski <agorski@student.42.fr>            +#+  +:+       +#+        */
+/*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/24 13:33:44 by agorski           #+#    #+#             */
-/*   Updated: 2025/11/25 14:52:05 by agorski          ###   ########.fr       */
+/*   Updated: 2025/12/17 14:30:10 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -40,16 +40,16 @@ std::string executeCgi(const std::string& scriptPath,
     if (pid == 0) // Child process
     {
         // close unused pipe ends
-        close(pipeStout[1]);
-        close(pipeStin[0]);
-
-        // redirect stdin from pipe (body to CGI)
-        dup2(pipeStin[1], STDIN_FILENO);
+        close(pipeStout[0]);
         close(pipeStin[1]);
 
+        // redirect stdin from pipe (body to CGI)
+        dup2(pipeStin[0], STDIN_FILENO);
+        close(pipeStin[0]);
+
         // redirect stdout to pipe (CGI output to parent)
-        dup2(pipeStout[0], STDOUT_FILENO);
-        close(pipeStout[0]);
+        dup2(pipeStout[1], STDOUT_FILENO);
+        close(pipeStout[1]);
 
         // set environment variables
         for (std::map<std::string, std::string>::iterator it = envVars.begin(); it != envVars.end(); ++it)
@@ -57,45 +57,76 @@ std::string executeCgi(const std::string& scriptPath,
             setenv(it->first.c_str(), it->second.c_str(), 1); //wedlug pawla nie moge
         }
 
-        // Execute CGI interpreter
+        std::string execPath = interpreterPath;
+        if (!execPath.empty() && execPath[execPath.size() - 1] == '/')
+            execPath.erase(execPath.size() - 1);
+
         char* args[3];
-        args[0] = const_cast<char*>(interpreterPath.c_str());
+        args[0] = const_cast<char*>(execPath.c_str());
         args[1] = const_cast<char*>(scriptPath.c_str());
         args[2] = NULL;
 
-        if (execve(interpreterPath.c_str(), args, environ) == -1)
-            throw std::runtime_error("Execve Error");
-
-        else // Parent process
+        // std::cerr << "About to execve: " << execPath << " " << scriptPath << std::endl;
+        if (execve(execPath.c_str(), args, environ) == -1)
         {
-            close(pipeStout[0]);
-            close(pipeStin[1]);
-            
-            // write body to CGI stdin
-            if (!body.empty())
-                write(pipeStin[0], body.c_str(), body.size());
-            close(pipeStin[0]);
-
-            // read CGI output from stdout
-            
-            std::string output;
-            char buffer[4096];
-            ssize_t bytesRead;
-
-            while ((bytesRead = read(pipeStout[1], buffer, sizeof(buffer))) > 0)
-            {
-                output.append(buffer, bytesRead);
-            }
-
-            close(pipeStout[1]);
-
-            // wait for child process to finish
-            int status;
-            waitpid(pid, &status, 0);
-            if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-                throw std::runtime_error("CGI Execution Failed");
-            return "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + output;
+            std::cerr << "execve error: " << std::endl;
+            _exit(127);
         }
+    }
+    else // Parent process
+    {
+        close(pipeStout[1]);
+        close(pipeStin[0]);
+        
+        // write body to CGI stdin
+        if (!body.empty())
+            write(pipeStin[1], body.c_str(), body.size());
+        close(pipeStin[1]);
+
+        // read CGI output from stdout
+        
+        std::string body;
+        char buffer[4096];
+        ssize_t bytesRead;
+
+        while ((bytesRead = read(pipeStout[0], buffer, sizeof(buffer))) > 0)
+        {
+            body.append(buffer, bytesRead);
+        }
+
+        close(pipeStout[0]);
+
+        // wait for child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+            throw std::runtime_error("CGI Execution Failed");
+        
+        std::ostringstream response;
+        if (!body.find("\r\n\r\n"))
+            {
+                int bodyLength = body.length() - body.find("\r\n\r\n") - 4;
+                response    << "HTTP/1.1 200 OK\r\n"
+                            << "Content-Length: " << bodyLength << "\r\n"
+                            << body;        
+            }
+        else if (!body.empty())
+        {
+            response << "HTTP/1.1 200 OK\r\n"
+                    << "Content-Length: " << body.length() << "\r\n"
+                    << "Content-Type: text/html\r\n"
+                    << "Content-Type: application/octet-stream\r\n"
+                    << "Connection: close\r\n"
+                    << "\r\n"
+                    << body;
+        }
+        else
+        {
+            response << "HTTP/1.1 204 No Content\r\n"
+                    << "Connection: close\r\n"
+                    << "\r\n";
+        }
+        return (response.str());
     }
 }
     catch (const std::exception& e)
