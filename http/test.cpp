@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   test.cpp                                           :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: agorski <agorski@student.42.fr>            +#+  +:+       +#+        */
+/*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/03 14:36:23 by agorski           #+#    #+#             */
-/*   Updated: 2025/12/03 14:36:36 by agorski          ###   ########.fr       */
+/*   Updated: 2025/12/16 16:00:39 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,7 +14,7 @@
 
 void Http::testResponseBuilder() {
 //tempolary response for testing
-    if (_s_requestData._path == "/favicon.ico") {
+    if (_s_requestData._uri == "/favicon.ico") {
         _s_responseData._response = "HTTP/1.1 204 No Content\r\n"
                                    "Connection: close\r\n"
                                    "\r\n";
@@ -37,7 +37,7 @@ void Http::testResponseBuilder() {
          << "<h1>" << 200 << " " << "OK" << "</h1>\n"
          << "<p>" << "Request was successful." << "</p>\n"
          << "<p>Method: " << _s_requestData._method << "</p>\n"
-         << "<p>Path: " << _s_requestData._path << "</p>\n"
+         << "<p>Path: " << _s_requestData._uri << "</p>\n"
          << "<p>Version: " << _s_requestData._httpVersion << "</p>\n"
          << "<p>Headers:</p>\n";
          for (std::map<std::string, std::string>::const_iterator it = _s_requestData._headers.begin(); 

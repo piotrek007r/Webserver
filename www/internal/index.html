@@ -28,7 +28,7 @@
 		<section class="card" id="get-card">
 			<h2>GET</h2>
 			<div class="row">
-				<input id="get-url" type="text" value="/" placeholder="/index.html" />
+				<input id="get-url" type="text" value="" placeholder="/index.html" />
 				<button class="btn" id="btn-get">GET</button>
 			</div>
 			<div id="get-resp" class="response" hidden></div>
@@ -66,8 +66,11 @@
 		<!-- DELETE -->
 		<section class="card" id="delete-card">
 			<h2>DELETE</h2>
+			<div class="row" style="margin-top:8px">
+			<input id="del-url" type="text" value="" placeholder="Location (optional)"/>
+			</div>
 			<div class="row">
-				<input id="del-url" type="text" value="" placeholder="File name to delete" />
+				<input id="del-file" type="text" value="" placeholder="File name to delete" />
 				<button class="btn danger" id="btn-del">DELETE</button>
 			</div>
 			<div id="del-listing" class="response" hidden></div>
@@ -98,7 +101,7 @@
 
 		async function loadDeleteListing() {
 			const listBox = document.getElementById('del-listing');
-			const delInput = document.getElementById('del-url');
+			const delFileInput = document.getElementById('del-file');
 			listBox.hidden = false;
 			listBox.className = 'response';
 			listBox.textContent = 'Loading /internal ...';
@@ -140,7 +143,7 @@
 					btn.className = 'btn secondary';
 					btn.textContent = 'Use';
 					btn.addEventListener('click', () => {
-						delInput.value = item;
+						delFileInput.value = item;
 					});
 					row.appendChild(label);
 					row.appendChild(btn);
@@ -252,7 +255,9 @@
 
 		// DELETE
 		document.getElementById('btn-del').addEventListener('click', async () => {
-			const url = (document.getElementById('del-url').value || '').trim();
+			const baseUrl = (document.getElementById('del-url').value || '').trim();
+			const fileName = (document.getElementById('del-file').value || '').trim();
+			const url = (baseUrl + fileName).trim();
 			const respBox = document.getElementById('del-resp');
 			if (!confirm(`Delete file: ${url}?`)) return;
 			try {
