@@ -308,7 +308,7 @@ void Http::handleFile(const std::string& filePath) {
     int fd = open(filePath.c_str(), O_RDONLY);
     
     if (fd == -1) {
-        sendError(403);
+        sendError(404);
         return;
     }
     
@@ -607,7 +607,7 @@ void Http::deleteResponseBuilder() {
  
     std::cout << YELLOW << "DELETE fullPath: '" << fullPath << "'" << RESET << std::endl;
     
-    if (!resourceExists(fullPath) || fullPath == (  _myConfig.upload_dir + "/") ) {
+    if (!resourceExists(fullPath) || fullPath == _myConfig.upload_dir) {
         std::cout << RED << "DELETE 404: file not found" << RESET << std::endl;
         sendError(404);
         return;
