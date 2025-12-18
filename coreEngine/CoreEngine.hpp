@@ -61,12 +61,14 @@ private:
 
     public:
         CoreEngine(const std::vector<ServerConfig> &serverCfg);
+        ~CoreEngine();
         void setSocket(size_t i);
         void setConnection(size_t i);
         void recivNClose(size_t i);
         void sendToClient(size_t i);
         void coreEngine();
         long getTimeStamp(timeval countFrom, timeval compareTime);
+        static volatile sig_atomic_t alive;
 };
 
 #endif
