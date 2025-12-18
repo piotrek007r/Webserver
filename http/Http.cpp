@@ -557,7 +557,7 @@ void Http::postResponseBuilder() {
         }
     }
 
-    std::string fullPath = _myConfig.upload_dir + "/" + mf.filename;
+    std::string fullPath = _myConfig.upload_dir + mf.filename;
 
     {
         int probe = open(fullPath.c_str(), O_RDONLY);

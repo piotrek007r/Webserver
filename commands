@@ -8,7 +8,7 @@ curl http://localhost:9090/
 curl http://localhost:9090/internal/
 DELETE http://localhost:9090/internal/int_data%20copy.txt
 curl -X DELETE http://localhost:9090/txt.txt
-
+curl -X  POST http://localhost:8080/directory/youpi.bla
 
 
 
