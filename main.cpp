@@ -16,7 +16,6 @@ volatile sig_atomic_t CoreEngine::alive = true;
 
 void signalHandler(int sigNum)
 {
-    (void)sigNum;
     CoreEngine::alive = false;
 }
 
