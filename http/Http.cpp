@@ -7,11 +7,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-struct MultipartFile {
-    std::string filename;
-    std::string data;
-};
-
 static bool extractBoundary(const std::string& contentType, std::string& boundaryOut);
 static bool parseMultipartFilePart(const std::string& body,
                                    const std::string& boundary,
@@ -140,11 +135,24 @@ bool Http::isBodySizeAllowed() {
     return true;
 }
 
+std::string Http::getCGIinterpreter(const std::string& fileName) {
+    size_t dotPos = fileName.find_last_of('.');
+    if (dotPos == std::string::npos) {
+        return "";
+    }
+    std::string extension = fileName.substr(dotPos);
+    std::map<std::string, std::string>::iterator it = _myConfig.interpreters.find(extension);
+    if (it != _myConfig.interpreters.end()) {
+        return it->second;
+    }
+    return "";
+}
+
 // Build CGI response
 void Http::cgiResponseBuilder() {
 
     std::string scriptPath = _myConfig.scripts_path +_s_requestData._fileName;
-    
+    std::string cgiInterpreter = getCGIinterpreter(_s_requestData._fileName);
     if (!resourceExists(scriptPath)) {
         sendError(404);
         return;
@@ -161,8 +169,11 @@ void Http::cgiResponseBuilder() {
     envVars["SCRIPT_FILENAME"] = scriptPath;
     envVars["QUERY_STRING"] = _s_requestData._queryString;
     envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
-    envVars["PATH_INFO"] = scriptPath;
+    envVars["PATH_INFO"] = _s_requestData._uri;
     envVars["SCRIPT_NAME"] = _s_requestData._fileName;
+
+    if (envVars["PATH_INFO"][0] != '/')
+        envVars["PATH_INFO"] = "/" + envVars["PATH_INFO"];
     
     if (!body.empty()) {
         std::ostringstream oss;
@@ -177,16 +188,20 @@ void Http::cgiResponseBuilder() {
     }
     
     for (std::map<std::string, std::string>::iterator it = _s_requestData._headers.begin();
-         it != _s_requestData._headers.end(); ++it) {
+         it != _s_requestData._headers.end(); ++it)
+         {
+            if (it ->first == "Host" && it ->second[it ->second.length() - 1] != '/')
+                it ->second = it ->second + "/"; 
+
         std::string key = "HTTP_" + it->first;
         for (size_t i = 0; i < key.length(); ++i) {
             if (key[i] == '-') key[i] = '_';
             key[i] = std::toupper(key[i]);
         }
         envVars[key] = it->second;
-    }
+        }
     
-    std::string response = executeCgi(scriptPath, _myConfig.cgi_path, body, envVars);
+    std::string response = executeCgi(scriptPath, cgiInterpreter, body, envVars);
     
     _s_responseData._response = response;
     _s_responseData._responseStatusCode = 200;  
@@ -691,7 +706,7 @@ void Http::deleteDirectory(const std::string& dirPath) {
 }
 
 bool Http::isCGI() {
-    if (_myConfig.cgi_ext.empty() || _myConfig.cgi_path.empty()) {
+    if (_myConfig.interpreters.empty()) {
         return false;
     }
     
@@ -701,8 +716,14 @@ bool Http::isCGI() {
     }
     
     std::string extension = _s_requestData._uri.substr(dotPos);
+    if (extension.empty()) {
+        return false;
+    }
+    if (_myConfig.interpreters.find(extension) == _myConfig.interpreters.end()) {
+        return false;
+    }
     
-    return (extension == _myConfig.cgi_ext);
+    return (true);
 }
 
 bool Http::isMethodAllowed() {
@@ -766,8 +787,6 @@ LocationConfig Http::getMyConfig() {
     myConfig.autoindex = false;
     myConfig.client_max_body_size = "";
     myConfig.upload_dir = "";
-    myConfig.cgi_path = "";
-    myConfig.cgi_ext = "";
     myConfig.has_redirect = false;
     myConfig.redirect_url = "";
     myConfig.redirect_code = 0;
@@ -795,8 +814,7 @@ LocationConfig Http::getMyConfig() {
         myConfig.client_max_body_size = _serverData.client_max_body_size;
         myConfig.autoindex = _serverData.autoindex;
         myConfig.upload_dir = _serverData.upload_dir;
-        myConfig.cgi_path = _serverData.cgi_path;
-        myConfig.cgi_ext = _serverData.cgi_ext;
+        myConfig.interpreters = _serverData.interpreters;
         myConfig.error_pages = _serverData.error_pages;
     }
     return myConfig;
