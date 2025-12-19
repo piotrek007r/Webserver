@@ -5,13 +5,25 @@
 #include "coreEngine/CoreEngine.hpp"
 #include "configReader/config.hpp"
 #include "http/Http.hpp"
+#include "utils/utils.hpp"
+
 #include <iostream>
 #include <cerrno>
 #include <cstring>
-#include "utils/utils.hpp"
+#include <csignal>
+
+volatile sig_atomic_t CoreEngine::alive = true;
+
+void signalHandler(int sigNum)
+{
+    CoreEngine::alive = false;
+}
 
 int main(int argc, char **argv)
 {
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
+
 try
     {
         
