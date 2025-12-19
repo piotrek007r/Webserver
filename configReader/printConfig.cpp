@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   printConfig.cpp                                    :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: agorski <agorski@student.42.fr>            +#+  +:+       +#+        */
+/*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/22 21:38:43 by agorski           #+#    #+#             */
-/*   Updated: 2025/12/03 11:04:07 by agorski          ###   ########.fr       */
+/*   Updated: 2025/12/19 16:37:36 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -40,8 +40,10 @@ void Config::printConfigs() const
         std::cout << "  index: " << srv.index << std::endl;
         std::cout << "  root: " << srv.root << std::endl;
         std::cout << "  upload_dir: " << srv.upload_dir << std::endl;
-        std::cout << "  cgi_path: " << srv.cgi_path << std::endl;
-        std::cout << "  cgi_ext: " << srv.cgi_ext << std::endl;
+        for (std::map<std::string, std::string>::const_iterator it = srv.interpreters.begin(); 
+             it != srv.interpreters.end(); ++it)
+            std::cout << "  interpreter: " << it->first << " -> " << it->second << std::endl;
+    
         
         std::cout << "  error_pages: ";
         for (std::map<int, std::string>::const_iterator it = srv.error_pages.begin(); 
@@ -68,9 +70,10 @@ void Config::printConfigs() const
             std::cout << "      index: " << lc.index << std::endl;
             std::cout << "      root: " << lc.root << std::endl;
             std::cout << "      upload_dir: " << lc.upload_dir << std::endl;
-            std::cout << "      cgi_path: " << lc.cgi_path << std::endl;
-            std::cout << "      cgi_ext: " << lc.cgi_ext << std::endl;
-            
+            for (std::map<std::string, std::string>::const_iterator it = lc.interpreters.begin(); 
+                 it != lc.interpreters.end(); ++it)
+                std::cout << "      interpreter: " << it->first << " -> " << it->second << std::endl;
+                     
             std::cout << "      error_pages: ";
             for (std::map<int, std::string>::const_iterator it = lc.error_pages.begin(); 
                  it != lc.error_pages.end(); ++it)

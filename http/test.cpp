@@ -6,7 +6,7 @@
 /*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/03 14:36:23 by agorski           #+#    #+#             */
-/*   Updated: 2025/12/16 16:00:39 by gbuczyns         ###   ########.fr       */
+/*   Updated: 2025/12/19 16:39:05 by gbuczyns         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -50,7 +50,11 @@ void Http::testResponseBuilder() {
          html << "<h2>Location Config</h2>\n";
          html << "<p><strong>root:</strong> " << _myConfig.root << "</p>\n";
          html << "<p><strong>upload_dir:</strong> " << _myConfig.upload_dir << "</p>\n";
-         html << "<p><strong>cgi_path:</strong> " << _myConfig.cgi_path << "</p>\n";
+         for (std::map<std::string, std::string>::const_iterator it = _myConfig.interpreters.begin(); 
+              it != _myConfig.interpreters.end(); ++it)
+         {
+             html << "<p><strong>interpreter " << it->first << ":</strong> " << it->second << "</p>\n";
+         }
          html << "<p><strong>client_max_body_size:</strong> " << _myConfig.client_max_body_size << "</p>\n";
          html << "<p><strong>autoindex:</strong> " << (_myConfig.autoindex ? "true" : "false") << "</p>\n";
 
@@ -63,9 +67,10 @@ void Http::testResponseBuilder() {
              html << "<p> - " << _myConfig.index[i] << "</p>\n";
 
          html << "<p><strong>cgi_ext:</strong></p>\n";
-         for (size_t i = 0; i < _myConfig.cgi_ext.size(); ++i)
-             html << "<p> - " << _myConfig.cgi_ext[i] << "</p>\n";
-
+         for (std::map<std::string, std::string>::const_iterator it = _myConfig.interpreters.begin();
+              it != _myConfig.interpreters.end(); ++it)
+             html << "<p> - " << it->first << " => " << it->second << "</p>\n";
+             
          html << "<p><strong>error_pages:</strong></p>\n";
          for (std::map<int, std::string>::const_iterator it = _myConfig.error_pages.begin();
               it != _myConfig.error_pages.end(); ++it)
