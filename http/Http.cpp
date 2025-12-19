@@ -157,8 +157,21 @@ void Http::cgiResponseBuilder() {
     
     std::map<std::string, std::string> envVars;
     
+    envVars["AUTH_TYPE"] = _s_requestData._headers["Authorization"];
+    envVars["CONTENT_LENGTH"] = _s_requestData._headers["Content-Length"];
+    envVars["CONTENT_TYPE"] = _s_requestData._headers["Content-Type"];
+    envVars["GATEWAY_INTERFACE"] = "CGI/1.1";
+    envVars["PATH_TRANSLATED"] = scriptPath;
+    envVars["REMOTE_ADDR"] = _s_requestData._headers["Host"];
+    envVars["REMOTE_HOST"] = _s_requestData._headers["Host"];
+    envVars["REMOTE_IDENT"] = "";
+    envVars["REMOTE_USER"] = "";
     envVars["REQUEST_METHOD"] = _s_requestData._method;
     envVars["SCRIPT_FILENAME"] = scriptPath;
+    envVars["SERVER_NAME"] = _serverData.server_name;
+    envVars["SERVER_PORT"] = _serverData.listen_port;
+    envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
+    envVars["SERVER_SOFTWARE"] = "WebServer/1.0";
     envVars["QUERY_STRING"] = _s_requestData._queryString;
     envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
     envVars["PATH_INFO"] = scriptPath;
@@ -776,24 +789,32 @@ LocationConfig Http::getMyConfig() {
     
     bool locationFound = false;
     
+    std::cout << CYAN << "DEBUG getMyConfig: URI = '" << _s_requestData._uri << "'" << RESET << std::endl;
+    
     for (std::map<std::string, LocationConfig>::iterator it = _serverData.locations.begin();
          it != _serverData.locations.end(); ++it) {
+        std::cout << CYAN << "DEBUG: Checking location '" << it->first << "'" << RESET << std::endl;
         if (_s_requestData._uri.find(it->first) == 0) {
+            std::cout << GREEN << "DEBUG: Location MATCHED! '" << it->first << "'" << RESET << std::endl;
             myConfig = Config::getMergedLocationConfig(_serverData, it->second);
             locationFound = true;
             _s_requestData._request = _s_requestData._uri.substr(it->first.length());
+            std::cout << GREEN << "DEBUG: After merge - has_redirect: " << myConfig.has_redirect 
+                      << ", redirect_url: '" << myConfig.redirect_url << "'"
+                      << ", redirect_code: " << myConfig.redirect_code << RESET << std::endl;
             break;
         }
-        else 
-            _s_requestData._request = _s_requestData._uri;
     }
-    
     if (!locationFound) {
+        _s_requestData._request = _s_requestData._uri;
         myConfig.root = _serverData.root;
         myConfig.allow_methods = _serverData.allow_methods;
         myConfig.index = _serverData.index;
         myConfig.client_max_body_size = _serverData.client_max_body_size;
         myConfig.autoindex = _serverData.autoindex;
+        myConfig.has_redirect = _serverData.has_redirect;
+        myConfig.redirect_url = _serverData.redirect_url;
+        myConfig.redirect_code = _serverData.redirect_code;
         myConfig.upload_dir = _serverData.upload_dir;
         myConfig.cgi_path = _serverData.cgi_path;
         myConfig.cgi_ext = _serverData.cgi_ext;
