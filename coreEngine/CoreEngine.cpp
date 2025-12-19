@@ -103,7 +103,7 @@ void CoreEngine::coreEngine()
    std::cout << "number of listening sockets: " << lSockNum << std::endl;
 
    pollFDsNum = lSockNum;
-   while (pollFDsNum > 0)
+   while (pollFDsNum > 0 && alive)
    {
       int pollstatus = poll(&(pollFDs[0]), pollFDsNum, poolTimeout);
       if (pollstatus > 0)
@@ -146,4 +146,17 @@ void CoreEngine::coreEngine()
             }
          }
    }
+}
+
+CoreEngine::~CoreEngine()
+{
+   std::cout << "Cleaning time!" << std::endl;
+   for(size_t i = 0; i < socketFD.size(); i++)
+   {
+      close(socketFD[i]);
+   } 
+   for(size_t i = 0; i < clientVec.size(); i++)
+   {
+      close(clientVec[i].FD);
+   } 
 }
