@@ -185,14 +185,18 @@ void Http::cgiResponseBuilder() {
     }
     
     for (std::map<std::string, std::string>::iterator it = _s_requestData._headers.begin();
-         it != _s_requestData._headers.end(); ++it) {
+         it != _s_requestData._headers.end(); ++it)
+         {
+            if (it ->first == "Host") 
+                it ->second = it ->second + "/"; 
+
         std::string key = "HTTP_" + it->first;
         for (size_t i = 0; i < key.length(); ++i) {
             if (key[i] == '-') key[i] = '_';
             key[i] = std::toupper(key[i]);
         }
         envVars[key] = it->second;
-    }
+        }
     
     std::string response = executeCgi(scriptPath, cgiInterpreter, body, envVars);
     

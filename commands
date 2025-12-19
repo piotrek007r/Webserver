@@ -12,6 +12,6 @@ curl -X  POST http://localhost:8080/directory/youpi.bla
 
 GET http://localhost:8080/directory/youpi.bla
 
-
+./ubuntu_tester http://localhost:8080
 
 asdasqwe
