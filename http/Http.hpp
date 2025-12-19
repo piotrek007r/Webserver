@@ -132,6 +132,7 @@ class Http {
         void deleteFile(const std::string& filePath);
         void deleteDirectory(const std::string& dirPath);
         std::string getCGIinterpreter(const std::string& fileName);
+        void chankuj();
 
 
 
