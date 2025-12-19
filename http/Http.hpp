@@ -29,6 +29,17 @@
 #define WHITE       "\033[37m"
 #define ORANGE      "\033[38;5;208m"
 
+struct MultipartFile {
+    std::string filename;
+    std::string data;
+};
+
+struct CGIinterpreter {
+    std::string cgiExtension;
+    std::string interpreterPath;
+};
+
+
 class Http {
     
     private:
@@ -120,6 +131,7 @@ class Http {
         void generateDirectoryListing(const std::string& dirPath);
         void deleteFile(const std::string& filePath);
         void deleteDirectory(const std::string& dirPath);
+        std::string getCGIinterpreter(const std::string& fileName);
 
 
 

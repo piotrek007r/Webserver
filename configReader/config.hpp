@@ -11,12 +11,11 @@ struct LocationConfig {
     std::string client_max_body_size;
     std::map<int, std::string> error_pages;
     std::vector<std::string> allow_methods;
+    std::map<std::string, std::string> interpreters;
     bool autoindex;
     std::string index;
     std::string upload_dir;
-    std::string cgi_path;
     std::string scripts_path;
-    std::string cgi_ext;
     std::string root;
     bool has_redirect;           // Czy lokacja ma redirect
     int redirect_code;           // 301, 302, 303, 307, 308
@@ -32,12 +31,11 @@ struct ServerConfig {
     std::string client_max_body_size;
     std::map<int, std::string> error_pages;
     std::vector<std::string> allow_methods;
+    std::map<std::string, std::string> interpreters;
     bool autoindex;
     std::string index;
     std::string upload_dir;
-    std::string cgi_path;
     std::string scripts_path;
-    std::string cgi_ext;
     std::string root;
     bool has_redirect;          // Czy lokacja ma redirect
     int redirect_code;           // 301, 302, 303, 307, 308
