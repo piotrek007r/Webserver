@@ -169,8 +169,11 @@ void Http::cgiResponseBuilder() {
     envVars["SCRIPT_FILENAME"] = scriptPath;
     envVars["QUERY_STRING"] = _s_requestData._queryString;
     envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
-    envVars["PATH_INFO"] = scriptPath;
+    envVars["PATH_INFO"] = _s_requestData._uri;
     envVars["SCRIPT_NAME"] = _s_requestData._fileName;
+
+    if (envVars["PATH_INFO"][0] != '/')
+        envVars["PATH_INFO"] = "/" + envVars["PATH_INFO"];
     
     if (!body.empty()) {
         std::ostringstream oss;
@@ -187,7 +190,7 @@ void Http::cgiResponseBuilder() {
     for (std::map<std::string, std::string>::iterator it = _s_requestData._headers.begin();
          it != _s_requestData._headers.end(); ++it)
          {
-            if (it ->first == "Host") 
+            if (it ->first == "Host" && it ->second[it ->second.length() - 1] != '/')
                 it ->second = it ->second + "/"; 
 
         std::string key = "HTTP_" + it->first;
