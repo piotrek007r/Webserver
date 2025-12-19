@@ -158,61 +158,130 @@ void Http::cgiResponseBuilder() {
         return;
     }
     
+    // Get absolute path for PATH_TRANSLATED
+    char resolvedPath[PATH_MAX];
+    std::string absoluteScriptPath = scriptPath;
+    if (realpath(scriptPath.c_str(), resolvedPath) != NULL) {
+        absoluteScriptPath = std::string(resolvedPath);
+    }
+    
     std::string body;
     if (_rawRequestPtr != NULL && _bodyLen > 0) {
-        body = _rawRequestPtr->substr(_bodyStart, _bodyLen);
+        std::string rawBody = _rawRequestPtr->substr(_bodyStart, _bodyLen);
+        
+        // Check if Transfer-Encoding: chunked
+        std::map<std::string, std::string>::iterator te_it = _s_requestData._headers.find("Transfer-Encoding");
+        if (te_it != _s_requestData._headers.end() && te_it->second.find("chunked") != std::string::npos) {
+            // Decode chunked body
+            std::cout << YELLOW << "DEBUG: Decoding chunked body..." << RESET << std::endl;
+            size_t pos = 0;
+            while (pos < rawBody.size()) {
+                size_t chunkLineEnd = rawBody.find("\r\n", pos);
+                if (chunkLineEnd == std::string::npos) break;
+                
+                std::string chunkSizeStr = rawBody.substr(pos, chunkLineEnd - pos);
+                size_t chunkSize = std::strtoul(chunkSizeStr.c_str(), NULL, 16);
+                
+                if (chunkSize == 0) break; // Last chunk
+                
+                size_t chunkDataStart = chunkLineEnd + 2;
+                body.append(rawBody.substr(chunkDataStart, chunkSize));
+                pos = chunkDataStart + chunkSize + 2; // Skip data and trailing \r\n
+            }
+            std::cout << YELLOW << "DEBUG: Decoded body length: " << body.length() << RESET << std::endl;
+        } else {
+            body = rawBody;
+        }
     }
+    
+    std::cout << YELLOW << "DEBUG CGI - body length: " << body.length() << RESET << std::endl;
+    std::cout << YELLOW << "DEBUG CGI - _bodyStart: " << _bodyStart << ", _bodyLen: " << _bodyLen << RESET << std::endl;
     
     std::map<std::string, std::string> envVars;
     
-    envVars["AUTH_TYPE"] = _s_requestData._headers["Authorization"];
-    envVars["CONTENT_LENGTH"] = _s_requestData._headers["Content-Length"];
-    envVars["CONTENT_TYPE"] = _s_requestData._headers["Content-Type"];
-    envVars["GATEWAY_INTERFACE"] = "CGI/1.1";
-    envVars["PATH_TRANSLATED"] = scriptPath;
-    envVars["REMOTE_ADDR"] = _s_requestData._headers["Host"];
-    envVars["REMOTE_HOST"] = _s_requestData._headers["Host"];
-    envVars["REMOTE_IDENT"] = "";
-    envVars["REMOTE_USER"] = "";
-    envVars["REQUEST_METHOD"] = _s_requestData._method;
-    envVars["SCRIPT_FILENAME"] = scriptPath;
-    envVars["SERVER_NAME"] = _serverData.server_name;
-    envVars["SERVER_PORT"] = _serverData.listen_port;
-    envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
-    envVars["SERVER_SOFTWARE"] = "WebServer/1.0";
-    envVars["QUERY_STRING"] = _s_requestData._queryString;
-    envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
-    envVars["PATH_INFO"] = _s_requestData._uri;
-    envVars["SCRIPT_NAME"] = _s_requestData._fileName;
-
-    if (envVars["PATH_INFO"][0] != '/')
-        envVars["PATH_INFO"] = "/" + envVars["PATH_INFO"];
+    // RFC 3875 - Meta-Variables
+    // AUTH_TYPE - authentication method
+    if (_s_requestData._headers.find("Authorization") != _s_requestData._headers.end())
+        envVars["AUTH_TYPE"] = ""; // Extract from Authorization header if needed
     
+    // CONTENT_LENGTH - size of message-body
     if (!body.empty()) {
         std::ostringstream oss;
         oss << body.length();
         envVars["CONTENT_LENGTH"] = oss.str();
+    } else if (_s_requestData._headers.find("Content-Length") != _s_requestData._headers.end()) {
+        envVars["CONTENT_LENGTH"] = _s_requestData._headers["Content-Length"];
+    } else {
+        envVars["CONTENT_LENGTH"] = "";
     }
     
-    std::map<std::string, std::string>::iterator it = 
-        _s_requestData._headers.find("Content-Type");
-    if (it != _s_requestData._headers.end()) {
-        envVars["CONTENT_TYPE"] = it->second;
+    // CONTENT_TYPE - media type of message-body
+    std::map<std::string, std::string>::iterator ct_it = _s_requestData._headers.find("Content-Type");
+    if (ct_it != _s_requestData._headers.end()) {
+        envVars["CONTENT_TYPE"] = ct_it->second;
+    } else {
+        envVars["CONTENT_TYPE"] = "";
     }
     
-    for (std::map<std::string, std::string>::iterator it = _s_requestData._headers.begin();
-         it != _s_requestData._headers.end(); ++it)
-         {
-            if (it ->first == "Host" && it ->second[it ->second.length() - 1] != '/')
-                it ->second = it ->second + "/"; 
+    // GATEWAY_INTERFACE - CGI version
+    envVars["GATEWAY_INTERFACE"] = "CGI/1.1";
+    
+    // PATH_INFO - extra path information (empty if script name matches request)
+    // Some CGI binaries require PATH_INFO to be set, use "/" if no extra path
+    envVars["PATH_INFO"] = "/";
+    
+    // PATH_TRANSLATED - PATH_INFO translated to filesystem path
+    envVars["PATH_TRANSLATED"] = "";
+    
+    // QUERY_STRING - query information from URL
+    envVars["QUERY_STRING"] = _s_requestData._queryString;
+    
+    // REMOTE_ADDR - IP address of client
+    envVars["REMOTE_ADDR"] = "127.0.0.1"; // Should extract from actual connection
+    
+    // REMOTE_HOST - hostname of client (optional)
+    envVars["REMOTE_HOST"] = "";
+    
+    // REQUEST_METHOD - HTTP method
+    envVars["REQUEST_METHOD"] = _s_requestData._method;
+    
+    // SCRIPT_NAME - URI path to the script
+    envVars["SCRIPT_NAME"] = _s_requestData._uri;
+    
+    // SCRIPT_FILENAME - filesystem path to the script (non-standard but common)
+    envVars["SCRIPT_FILENAME"] = absoluteScriptPath;
+    
+    // SERVER_NAME - server's hostname or IP
+    envVars["SERVER_NAME"] = _serverData.server_name;
+    
+    // SERVER_PORT - port number
+    envVars["SERVER_PORT"] = _serverData.listen_port;
+    
+    // SERVER_PROTOCOL - HTTP version
+    envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
+    
+    // SERVER_SOFTWARE - name and version of server software
+    envVars["SERVER_SOFTWARE"] = "webserv/1.0";
 
+    std::cout << RED << "DEBUG CGI - _uri: '" << _s_requestData._uri << "'" << RESET << std::endl;
+    std::cout << RED << "DEBUG CGI - _request: '" << _s_requestData._request << "'" << RESET << std::endl;
+    std::cout << RED << "DEBUG CGI - _fileName: '" << _s_requestData._fileName << "'" << RESET << std::endl;
+    std::cout << RED << "DEBUG CGI - PATH_INFO: '" << envVars["PATH_INFO"] << "'" << RESET << std::endl;
+    std::cout << RED << "DEBUG CGI - SCRIPT_NAME: '" << envVars["SCRIPT_NAME"] << "'" << RESET << std::endl;
+    std::cout << RED << "DEBUG CGI - SCRIPT_FILENAME: '" << envVars["SCRIPT_FILENAME"] << "'" << RESET << std::endl;
+    
+    // Protocol-specific meta-variables (HTTP_*)
+    // RFC 3875 Section 4.1.18: HTTP header fields as HTTP_* variables
+    for (std::map<std::string, std::string>::iterator it = _s_requestData._headers.begin();
+         it != _s_requestData._headers.end(); ++it) {
         std::string key = "HTTP_" + it->first;
+        // Convert to uppercase and replace hyphens with underscores
         for (size_t i = 0; i < key.length(); ++i) {
             if (key[i] == '-') key[i] = '_';
-            key[i] = std::toupper(key[i]);
+            else key[i] = std::toupper(static_cast<unsigned char>(key[i]));
         }
         envVars[key] = it->second;
-        }
+    }
     
     std::string response = executeCgi(scriptPath, cgiInterpreter, body, envVars);
     
@@ -719,6 +788,11 @@ void Http::deleteDirectory(const std::string& dirPath) {
 }
 
 bool Http::isCGI() {
+    // CGI only for POST requests (tester requirement)
+    if (_s_requestData._method != "POST") {
+        return false;
+    }
+    
     if (_myConfig.interpreters.empty()) {
         return false;
     }

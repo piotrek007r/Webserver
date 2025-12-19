@@ -85,6 +85,25 @@ void CoreEngine::recivNClose(size_t el)
       }
 
       size_t contentLength = 0;
+      bool isChunked = false;
+      bool needMoreData = false;
+      
+      // Check for Transfer-Encoding: chunked
+      size_t tePos = headers.find("Transfer-Encoding:");
+      if (tePos != std::string::npos)
+      {
+         tePos += 18;
+         while (tePos < headers.size() && (headers[tePos] == ' ' || headers[tePos] == '\t')) tePos++;
+         size_t teEnd = headers.find("\r\n", tePos);
+         std::string teValue = headers.substr(tePos, teEnd - tePos);
+         if (teValue.find("chunked") != std::string::npos)
+         {
+            isChunked = true;
+            std::cout << CYAN << "DEBUG: Transfer-Encoding: chunked" << RESET << std::endl;
+         }
+      }
+      
+      // Check for Content-Length
       size_t clPos = headers.find("Content-Length:");
       if (clPos != std::string::npos)
       {
@@ -93,12 +112,82 @@ void CoreEngine::recivNClose(size_t el)
          size_t clEnd = headers.find("\r\n", clPos);
          std::string clStr = headers.substr(clPos, clEnd - clPos);
          contentLength = static_cast<size_t>(std::strtoul(clStr.c_str(), NULL, 10));
+         std::cout << CYAN << "DEBUG: Content-Length = " << contentLength << RESET << std::endl;
       }
 
-      size_t fullRequestLen = (end - begin + 4) + contentLength;
+      size_t fullRequestLen = 0;
+      
+      if (isChunked)
+      {
+         // Parse chunked encoding
+         size_t bodyStart = end + 4;
+         size_t pos = bodyStart;
+         size_t totalBodySize = 0;
+         
+         while (pos < temp.size() && !needMoreData)
+         {
+            // Find chunk size line
+            size_t chunkLineEnd = temp.find("\r\n", pos);
+            if (chunkLineEnd == std::string::npos)
+            {
+               // Need more data
+               std::cout << YELLOW << "DEBUG: Chunked - waiting for chunk size..." << RESET << std::endl;
+               needMoreData = true;
+               break;
+            }
+            
+            // Parse chunk size (hex)
+            std::string chunkSizeStr = temp.substr(pos, chunkLineEnd - pos);
+            size_t chunkSize = std::strtoul(chunkSizeStr.c_str(), NULL, 16);
+            
+            if (chunkSize == 0)
+            {
+               // Last chunk - check for final \r\n
+               if (chunkLineEnd + 4 > temp.size())
+               {
+                  std::cout << YELLOW << "DEBUG: Chunked - waiting for final CRLF..." << RESET << std::endl;
+                  needMoreData = true;
+                  break;
+               }
+               // Complete chunked request
+               fullRequestLen = chunkLineEnd + 4 - begin;
+               std::cout << GREEN << "DEBUG: Chunked complete, total body size = " << totalBodySize << RESET << std::endl;
+               break;
+            }
+            
+            // Check if we have the full chunk data
+            size_t chunkDataStart = chunkLineEnd + 2;
+            size_t chunkDataEnd = chunkDataStart + chunkSize;
+            
+            if (chunkDataEnd + 2 > temp.size())
+            {
+               // Need more data
+               std::cout << YELLOW << "DEBUG: Chunked - waiting for chunk data (need " << chunkSize << " bytes)..." << RESET << std::endl;
+               needMoreData = true;
+               break;
+            }
+            
+            totalBodySize += chunkSize;
+            pos = chunkDataEnd + 2; // Skip chunk data and trailing \r\n
+         }
+         
+         if (needMoreData)
+         {
+            // Don't erase anything - keep all data for next recv
+            break; // Exit the main while loop and wait for more data
+         }
+      }
+      else
+      {
+         fullRequestLen = (end - begin + 4) + contentLength;
+      }
+      
+      std::cout << CYAN << "DEBUG: fullRequestLen = " << fullRequestLen 
+                << ", available = " << (temp.size() - begin) << RESET << std::endl;
 
       if (temp.size() - begin < fullRequestLen)
       {
+         std::cout << YELLOW << "DEBUG: Waiting for more data..." << RESET << std::endl;
          temp.erase(0, begin);
          break;
       }
