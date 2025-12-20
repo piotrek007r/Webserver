@@ -56,10 +56,48 @@ Http::Http (std::string &rawRequest, ServerConfig serverData){
     std::cout << GREEN << "Debug: Exiting Http constructor" << std::endl;
     std::cout << _s_responseData._response << RESET << std::endl;
 }
+void Http::chankuj() 
+ {
+    std::string rawRequest = *_rawRequestPtr;
+    std::string unchunkedBody;
+    size_t pos = _bodyStart;
 
-void Http::requestBilder(std::string &rawRequest) {
+    while (pos < rawRequest.size()) {
+        size_t lineEnd = rawRequest.find("\r\n", pos);
+        if (lineEnd == std::string::npos)
+            break;
+
+        std::string sizeStr = rawRequest.substr(pos, lineEnd - pos);
+        size_t chunkSize = std::strtoul(sizeStr.c_str(), NULL, 16);
+        if (chunkSize == 0)
+            break; // Last chunk
+
+        pos = lineEnd + 2; // Move past \r\n
+        // Ensure there is enough data remaining for this chunk
+        if (pos > rawRequest.size())
+            break;
+        if (chunkSize > rawRequest.size() - pos)
+            break;
+
+        unchunkedBody.append(rawRequest, pos, chunkSize);
+
+        // Move past chunk and trailing \r\n, ensuring we stay in bounds
+        if (chunkSize + 2 > rawRequest.size() - pos)
+            break;
+        pos += chunkSize + 2;
+        if (chunkSize == 0) break; // Last chunk
+    }
+    // Replace the original body with the unchunked body
+    rawRequest.replace(_bodyStart, _bodyLen, unchunkedBody);
+    _bodyLen = unchunkedBody.size();
+}
+
+void Http::requestBilder(std::string &rawRequest) 
+{
     parseRequest(rawRequest);
     parseHeader();
+    if (_s_requestData._headers["Transfer-Encoding"] == "chunked")
+        chankuj();
 }
 
 // Parse HTTP request

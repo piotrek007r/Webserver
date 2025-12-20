@@ -1,15 +1,3 @@
-/* ************************************************************************** */
-/*                                                                            */
-/*                                                        :::      ::::::::   */
-/*   cgi.cpp                                            :+:      :+:    :+:   */
-/*                                                    +:+ +:+         +:+     */
-/*   By: gbuczyns <gbuczyns@student.42.fr>          +#+  +:+       +#+        */
-/*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2025/11/24 13:33:44 by agorski           #+#    #+#             */
-/*   Updated: 2025/12/17 14:30:10 by gbuczyns         ###   ########.fr       */
-/*                                                                            */
-/* ************************************************************************** */
-
 #include "cgi.hpp"
 
 std::string executeCgi(const std::string& scriptPath,
@@ -103,7 +91,11 @@ std::string executeCgi(const std::string& scriptPath,
             throw std::runtime_error("CGI Execution Failed");
         
         std::ostringstream response;
-        if (!body.find("\r\n\r\n"))
+        if (body.find("HTTP/1.1") != std::string::npos)
+        {
+            response << body;
+        }
+        else if (body.find("\r\n\r\n") != std::string::npos)
             {
                 int bodyLength = body.length() - body.find("\r\n\r\n") - 4;
                 response    << "HTTP/1.1 200 OK\r\n"
