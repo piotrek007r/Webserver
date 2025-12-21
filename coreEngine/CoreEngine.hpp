@@ -42,6 +42,8 @@ private:
             int FD;
             bool isHeader;
             bool isChunked;
+            bool hasContentLength;
+            bool bodyComplete;
             timeval lastAction;
             std::string fullHeader;
             int uploadFile;

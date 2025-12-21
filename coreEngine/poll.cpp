@@ -11,6 +11,8 @@ void CoreEngine::setConnection(size_t i)
    client.hasError = false;
    client.isHeader = false;
    client.isChunked = false;
+   client.bodyComplete = false;
+   client.hasContentLength = false;
    client.sendOffset = 0;
    client.contentLength = 0;
    gettimeofday(&client.lastAction, NULL);
@@ -60,12 +62,13 @@ void CoreEngine::appendChunks(client *client)
       {
          if (client->leftooverBuffer.size() >= 2)
             client->leftooverBuffer.erase(0, 2);
+         client->bodyComplete = true;
          break;
       }
       if ((client->leftooverBuffer.size() < chunkSize + 2))
          break;
       std::string chunk = client->leftooverBuffer.substr(0, chunkSize);
-      write(client->uploadFile, chunk.c_str(), chunk.size());
+      write(client->uploadFile, chunk.c_str(), chunk.size()); // check for error
       client->leftooverBuffer.erase(0, chunkSize + 2);
    }
 }
@@ -81,15 +84,18 @@ void CoreEngine::appendContnent(client *client)
       std::string cl = client->fullHeader.substr(begin + 15, end - (begin + 15));
       client->contentLength = strtoul(cl.c_str(), NULL, 10);
       std::string path = generatePath();
-      client->uploadFile = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+      client->uploadFile = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644); // check for error
+      client->hasContentLength = true;
    }
    if (client->contentLength > 0)
    {
       size_t toWrite = std::min(client->contentLength, client->leftooverBuffer.size());
-      write(client->uploadFile, client->leftooverBuffer.c_str(), toWrite);
+      write(client->uploadFile, client->leftooverBuffer.c_str(), toWrite); // check for error
       client->contentLength -= toWrite;
       client->leftooverBuffer.erase(0, toWrite);
    }
+   if (client->contentLength == 0) 
+      client->bodyComplete = true;
 }
 
 void CoreEngine::recivNClose(size_t el)
@@ -118,7 +124,7 @@ void CoreEngine::recivNClose(size_t el)
 
    client.leftooverBuffer.append(client.inputBuffer, client.byteRecived);
 
-   if (!client.isHeader && !appendHeader(&client))
+   if (!client.isHeader)
       if (!appendHeader(&client))
          return;
 
@@ -126,12 +132,26 @@ void CoreEngine::recivNClose(size_t el)
    {
       client.isChunked = true;
       std::string path = generatePath();
-      client.uploadFile = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+      client.uploadFile = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644); // check for error
    }
    if (client.isChunked)
       appendChunks(&client);
    else
       appendContnent(&client);
+
+   if(client.bodyComplete)
+   {
+      std::cout << YELLOW << "-->This is request header: " << client.fullHeader << std::endl;
+   
+    Http object = (client.isChunked || client.hasContentLength) 
+                  ? Http(client.fullHeader, client.serverCfg, client.uploadFile)
+                  : Http(client.fullHeader, client.serverCfg);
+
+      if (object.getIsError())
+         client.hasError = true;
+      pollFDs[el].events = POLLOUT;
+      std::cout << ORANGE << "--> This is Response: " << object.getResponse().c_str() << RESET << std::endl;
+   }
 
    // while (true)
    // {
