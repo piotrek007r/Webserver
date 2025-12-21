@@ -46,3 +46,13 @@ long CoreEngine::getTimeStamp(timeval countFrom, timeval compareTime)
 
     return timeElapsed;
 }
+
+std::string CoreEngine::generatePath()
+{
+    timeval currentTime;
+    gettimeofday(&currentTime, NULL);
+
+    std::ostringstream oss;
+    oss << "uploadFiles/fileNr_" << currentTime.tv_sec << ".tmp";
+    return oss.str();
+}

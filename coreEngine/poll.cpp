@@ -9,7 +9,10 @@ void CoreEngine::setConnection(size_t i)
    memset(&client.clientSockaddr, 0, sizeof(sockaddr_in));
    client.serverCfg = serversCfg[i];
    client.hasError = false;
+   client.isHeader = false;
+   client.isChunked = false;
    client.sendOffset = 0;
+   client.contentLength = 0;
    gettimeofday(&client.lastAction, NULL);
 
    client.FD = accept(pollFDs[i].fd, (struct sockaddr *)&client.clientSockaddr, &addrLen);
@@ -29,6 +32,64 @@ void CoreEngine::setConnection(size_t i)
    pollFDsNum++;
    this->clientVec.push_back(client);
    std::cout << "socket: " << pollFDs[i].fd << " ready to connect" << std::endl;
+}
+
+bool CoreEngine::appendHeader(client *client)
+{
+   size_t begin = 0;
+   size_t end = client->leftooverBuffer.find("\r\n\r\n", begin);
+   if (end == std::string::npos)
+      return false;
+   client->fullHeader = client->leftooverBuffer.substr(begin, end + 4);
+   client->leftooverBuffer.erase(0, end + 4);
+   client->isHeader = true;
+   return true;
+}
+
+void CoreEngine::appendChunks(client *client)
+{
+   while (true)
+   {
+      size_t pos = client->leftooverBuffer.find("\r\n");
+      if (pos == std::string::npos)
+         break;
+      std::string lineSize = client->leftooverBuffer.substr(0, pos);
+      size_t chunkSize = strtoul(lineSize.c_str(), NULL, 16);
+      client->leftooverBuffer.erase(0, pos + 2);
+      if (chunkSize == 0)
+      {
+         if (client->leftooverBuffer.size() >= 2)
+            client->leftooverBuffer.erase(0, 2);
+         break;
+      }
+      if ((client->leftooverBuffer.size() < chunkSize + 2))
+         break;
+      std::string chunk = client->leftooverBuffer.substr(0, chunkSize);
+      write(client->uploadFile, chunk.c_str(), chunk.size());
+      client->leftooverBuffer.erase(0, chunkSize + 2);
+   }
+}
+
+void CoreEngine::appendContnent(client *client)
+{
+   size_t begin = client->fullHeader.find("Content-Length:");
+   if (begin != std::string::npos)
+   {
+      size_t end = client->fullHeader.find("\r\n", begin);
+      if (end == std::string::npos)
+         return;
+      std::string cl = client->fullHeader.substr(begin + 15, end - (begin + 15));
+      client->contentLength = strtoul(cl.c_str(), NULL, 10);
+      std::string path = generatePath();
+      client->uploadFile = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+   }
+   if (client->contentLength > 0)
+   {
+      size_t toWrite = std::min(client->contentLength, client->leftooverBuffer.size());
+      write(client->uploadFile, client->leftooverBuffer.c_str(), toWrite);
+      client->contentLength -= toWrite;
+      client->leftooverBuffer.erase(0, toWrite);
+   }
 }
 
 void CoreEngine::recivNClose(size_t el)
@@ -57,68 +118,79 @@ void CoreEngine::recivNClose(size_t el)
 
    client.leftooverBuffer.append(client.inputBuffer, client.byteRecived);
 
-
-   std::string &temp = client.leftooverBuffer;
-   size_t begin = 0;
-
-   while (true)
-   {
-      size_t end = temp.find("\r\n\r\n", begin);
-      if (end == std::string::npos)
-      {
-         temp.erase(0, begin);
-         break;
-      }
-
-      std::string headers = temp.substr(begin, end - begin + 4);
-
-      if (headers.find("HTTP/") == std::string::npos)
-      {
-         std::cout << "Invalid HTTP headers detected!" << std::endl;
-         client.hasError = true;
-         client.sendOffset = 0;
-         client.sendBuffer = errorHandler.generateErrorResponse(
-            400, "The request does not contain valid HTTP headers."
-         );
-         pollFDs[el].events = POLLOUT;
+   if (!client.isHeader && !appendHeader(&client))
+      if (!appendHeader(&client))
          return;
-      }
 
-      size_t contentLength = 0;
-      size_t clPos = headers.find("Content-Length:");
-      if (clPos != std::string::npos)
-      {
-         clPos += 15;
-         while (clPos < headers.size() && (headers[clPos] == ' ' || headers[clPos] == '\t')) clPos++;
-         size_t clEnd = headers.find("\r\n", clPos);
-         std::string clStr = headers.substr(clPos, clEnd - clPos);
-         contentLength = static_cast<size_t>(std::strtoul(clStr.c_str(), NULL, 10));
-      }
-
-      size_t fullRequestLen = (end - begin + 4) + contentLength;
-
-      if (temp.size() - begin < fullRequestLen)
-      {
-         temp.erase(0, begin);
-         break;
-      }
-
-      std::string request = temp.substr(begin, fullRequestLen);
-      client.requestBufferVec.push_back(request);
-      begin += fullRequestLen;
-   }
-
-   if (!client.requestBufferVec.empty())
+   if (client.fullHeader.find("Transfer-Encoding: chunked") != std::string::npos && !client.isChunked)
    {
-      client.sendBuffer.clear();
-      client.sendOffset = 0;
-
-      for (size_t i = 0; i < client.requestBufferVec.size(); i++)
-         client.sendBuffer += prepareResponse(client, el, i);
-
-      client.requestBufferVec.clear();
-      pollFDs[el].events = POLLOUT;
+      client.isChunked = true;
+      std::string path = generatePath();
+      client.uploadFile = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
    }
+   if (client.isChunked)
+      appendChunks(&client);
+   else
+      appendContnent(&client);
+
+   // while (true)
+   // {
+   //    size_t end = temp.find("\r\n\r\n", begin);
+   //    if (end == std::string::npos)
+   //    {
+   //       temp.erase(0, begin);
+   //       break;
+   //    }
+
+   //    std::string headers = temp.substr(begin, end - begin + 4);
+
+   //    if (headers.find("HTTP/") == std::string::npos)
+   //    {
+   //       std::cout << "Invalid HTTP headers detected!" << std::endl;
+   //       client.hasError = true;
+   //       client.sendOffset = 0;
+   //       client.sendBuffer = errorHandler.generateErrorResponse(
+   //          400, "The request does not contain valid HTTP headers."
+   //       );
+   //       pollFDs[el].events = POLLOUT;
+   //       return;
+   //    }
+
+   //    size_t contentLength = 0;
+   //    size_t clPos = headers.find("Content-Length:");
+   //    if (clPos != std::string::npos)
+   //    {
+   //       clPos += 15;
+   //       while (clPos < headers.size() && (headers[clPos] == ' ' || headers[clPos] == '\t')) clPos++;
+   //       size_t clEnd = headers.find("\r\n", clPos);
+   //       std::string clStr = headers.substr(clPos, clEnd - clPos);
+   //       contentLength = static_cast<size_t>(std::strtoul(clStr.c_str(), NULL, 10));
+   //    }
+
+   //    size_t fullRequestLen = (end - begin + 4) + contentLength;
+
+   //    if (temp.size() - begin < fullRequestLen)
+   //    {
+   //       temp.erase(0, begin);
+   //       break;
+   //    }
+
+   //    std::string request = temp.substr(begin, fullRequestLen);
+   //    client.requestBufferVec.push_back(request);
+   //    begin += fullRequestLen;
+   // }
+
+   // if (!client.requestBufferVec.empty())
+   // {
+   //    client.sendBuffer.clear();
+   //    client.sendOffset = 0;
+
+   //    for (size_t i = 0; i < client.requestBufferVec.size(); i++)
+   //       client.sendBuffer += prepareResponse(client, el, i);
+
+   //    client.requestBufferVec.clear();
+   //    pollFDs[el].events = POLLOUT;
+   // }
 }
 
 void CoreEngine::sendToClient(size_t el)
@@ -165,3 +237,11 @@ void CoreEngine::sendToClient(size_t el)
    pollFDs[el].events = POLLIN;
    // std::cout << "client: " << pollFDs[el].fd << " ready to send" << std::endl;
 }
+
+/*
+1. collects inputbuffers until i get full header: \r\n\r\n
+2. Then i need to get info out of this heder 2 things content-length or isChunked
+3. Run one of those 2 logics.
+4. when body is collected append it to header and send it as full request.
+5. Kepp whats left after body or signe header in leftover and clean sendBuffer.
+*/
