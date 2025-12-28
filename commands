@@ -10,6 +10,34 @@ DELETE http://localhost:9090/internal/int_data%20copy.txt
 curl -X DELETE http://localhost:9090/txt.txt
 curl -X  POST http://localhost:8080/directory/youpi.bla
 
+GET http://localhost:8080/directory/youpi.bla
 
+./ubuntu_tester http://localhost:8080
 
 asdasqwe
+
+# Test 1: Małe body (powinno zwrócić 405 Method Not Allowed)
+curl -X POST -d "test" http://localhost:8080/directory/youpi.bla
+
+# Test 2: Duże body (100MB - powinno zwrócić 413 Payload Too Large)
+dd if=/dev/zero bs=1M count=100 | curl -X POST -H "Content-Type: application/octet-stream" --data-binary @- http://localhost:8080/directory/youpi.bla -v
+
+
+curl -X POST --data-binary @./payload http://localhost:8080/directory/youpi.bla
+curl -X POST -H "Content-Type: application/octet-stream" --data-binary @./payload http://localhost:8080/directory/youpi.bla
+curl -X POST --data-binary @./payload http://localhost:8080/directory/youpi.bla -v
+
+
+
+# Opcja 1: Pipe przez stdin (curl nie zna rozmiaru)
+cat ./payload | curl -X POST -H "Content-Type: application/octet-stream" --data-binary @- http://localhost:8080/directory/youpi.bla
+
+# Opcja 2: Explicit chunked header
+curl -X POST -H "Transfer-Encoding: chunked" --data-binary @./payload http://localhost:8080/directory/youpi.bla
+curl -X POST -H "Transfer-Encoding: chunked" -H "Content-Type: application/octet-stream" --data-binary @./payload http://localhost:8080/directory/youpi.bla
+
+# Opcja 3: Verbose żeby zobaczyć czy chunked jest użyty
+curl -X POST --data-binary @./payload http://localhost:8080/directory/youpi.bla -v
+
+curl -X POST --data-binary @./payload http://localhost:8080/directory/youpi.bla -v
+

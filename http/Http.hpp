@@ -29,6 +29,45 @@
 #define WHITE       "\033[37m"
 #define ORANGE      "\033[38;5;208m"
 
+struct MultipartFile {
+    std::string filename;
+    std::string data;
+};
+
+struct CGIinterpreter {
+    std::string cgiExtension;
+    std::string interpreterPath;
+};
+
+struct ParseStatus {
+    enum Enum {
+        Continue,
+        Done,
+        Error_TooLarge,
+        Error_InvalidFormat
+    };
+};
+
+class RequestParser {
+    private:
+        std::string _buffer;
+        size_t _maxBodySize;
+        bool _headerParsed;
+        size_t _contentLength;
+        bool _isChunked;
+        size_t _bodyStart;
+        size_t _chunkedPos; // Tracks position in chunked body
+
+    public:
+        RequestParser();
+        void setMaxBodySize(size_t size);
+        ParseStatus::Enum consume(const char* buffer, size_t length);
+        bool hasRequest() const;
+        std::string extractRequest();
+        void reset();
+};
+
+
 class Http {
     
     private:
@@ -104,7 +143,6 @@ class Http {
 
         // Response functions
         void responseBuilder();
-        void testResponseBuilder();
         void requestBilder(std::string &rawRequest);
         LocationConfig getMyConfig();
         bool isCGI();
@@ -120,6 +158,8 @@ class Http {
         void generateDirectoryListing(const std::string& dirPath);
         void deleteFile(const std::string& filePath);
         void deleteDirectory(const std::string& dirPath);
+        std::string getCGIinterpreter(const std::string& fileName);
+        void chankuj(std::string& rawRequest);
 
 
 
@@ -138,6 +178,7 @@ class Http {
         bool getIsError() const;
         int getStatusCode() const;
         std::string getResponse() const;
+        bool shouldClose() const;
 };
 
 #endif

@@ -33,18 +33,20 @@ private:
             sockaddr_storage clientSockaddr;
             ServerConfig serverCfg;
             std::string sendBuffer;
-            std::string leftooverBuffer;
-            std::vector<std::string> requestBufferVec;
-            char inputBuffer[1024];
+            RequestParser parser;
+            char inputBuffer[65536];
             size_t sendOffset;
             bool hasError;
+            bool closeAfterSend;
             int byteRecived;
             int FD;
             timeval lastAction;
         }; 
         client &getClientByFD(int socketFD);
         void closeCLient(int el);
-        std::string prepareResponse(client &client, size_t el, size_t res);
+        std::string prepareResponse(client &client, size_t el, std::string rawRequest);
+        void failClient(size_t el, client &client, int code);
+        void failClient(size_t el, client &client, int code, const char *message);
         addrinfo hints;                       // base config of server
         std::vector<ServerConfig> serversCfg; // list of object parsed cfgfiles
         addrinfo *serv;

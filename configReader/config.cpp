@@ -4,6 +4,9 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <iostream>
+#include <cstdlib>
+#include <unistd.h>
 
 void trim(std::string& s) {
     size_t start = s.find_first_not_of(" \t\r\n");
@@ -24,6 +27,7 @@ void Config::parseLines(std::ifstream& file) {
     std::string currentLocationPath;
     bool inServer = false;
     bool inLocation = false;
+    bool hasError = false;
 
     while (std::getline(file, line)) {
         trim(line);
@@ -102,42 +106,54 @@ void Config::parseLines(std::ifstream& file) {
         }
         else if (key == "upload") {
             std::string upload_dir; iss >> upload_dir;
-            if (upload_dir[upload_dir.length() - 1] != '/' && !upload_dir.empty())
+            if (!upload_dir.empty() && upload_dir[upload_dir.length() - 1] != '/')
                 upload_dir = upload_dir + "/";
             if (inLocation)
                 currentLocation.upload_dir = upload_dir;
             else
                 currentServer.upload_dir = upload_dir;
         }
-        else if (key == "cgi_path") {
-            std::string cgi_path; iss >> cgi_path;
-            if (cgi_path[cgi_path.length() - 1] != '/' && !cgi_path.empty())
-                cgi_path = cgi_path + "/";
+        else if (key == "cgi") {
+            std::string cgi_ext, interpreter_path; 
+            iss >> cgi_ext >> interpreter_path;
+            if ( cgi_ext.empty() )
+                {std::cout << "Missing CGI extension\n";
+                hasError = true;}
+            if (interpreter_path.empty())
+                {std::cout << "Missing/incorect CGI interpreter path\n";
+                hasError = true;}
+            else {
+                const bool looksLikePath = (interpreter_path.find('/') != std::string::npos)
+                    || (interpreter_path.find("./") == 0)
+                    || (interpreter_path.find("../") == 0);
+                if (looksLikePath && access(interpreter_path.c_str(), X_OK) != 0)
+                    {std::cout << "Missing/incorect CGI interpreter path\n";
+                    hasError = true;}
+            }
             if (inLocation)
-                currentLocation.cgi_path = cgi_path;
+                currentLocation.interpreters[cgi_ext] = interpreter_path;
             else
-                currentServer.cgi_path = cgi_path;
+                currentServer.interpreters[cgi_ext] = interpreter_path;
         }
                 else if (key == "scripts_path") {
             std::string scripts_path; iss >> scripts_path;
-            if (scripts_path[scripts_path.length() - 1] != '/' && !scripts_path.empty())
+            if (!scripts_path.empty() && scripts_path[scripts_path.length() - 1] != '/')
                 scripts_path = scripts_path + "/";
+            if (access(scripts_path.c_str(), F_OK) != 0 )
+                {std::cout << "Scripts path does not exist\n";
+                hasError = true;}
             if (inLocation)
                 currentLocation.scripts_path = scripts_path;
             else
                 currentServer.scripts_path = scripts_path;
         }
-        else if (key == "cgi_ext") {
-            std::string cgi_ext; iss >> cgi_ext;
-            if (inLocation)
-                currentLocation.cgi_ext = cgi_ext;
-            else
-                currentServer.cgi_ext = cgi_ext;
-        }
         else if (key == "root") {
             std::string r; iss >> r;
-            if(r[r.length() - 1] != '/' && !r.empty())
+            if(!r.empty() && r[r.length() - 1] != '/')
                 r = r + "/";
+            if (access(r.c_str(), F_OK) != 0 )
+                {std::cout << "Root path does not exist\n";
+                hasError = true;}
             if (inLocation)
                 currentLocation.root = r;
             else
@@ -163,9 +179,23 @@ void Config::parseLines(std::ifstream& file) {
         else if (key == "location") {
             if (inLocation)
                 currentServer.locations[currentLocationPath] = currentLocation;
-            iss >> currentLocationPath;
-            currentServer.locations[currentLocationPath].location_path = currentLocationPath;
             currentLocation = LocationConfig();
+            std::string first;
+            iss >> first;
+
+            if (first == "~") {
+                std::string pattern;
+                iss >> pattern;
+                currentLocation.is_regex = true;
+                currentLocation.regex_pattern = pattern;
+                currentLocationPath = "~" + pattern;
+                currentLocation.location_path = "";
+            } else {
+                currentLocationPath = first;
+                if (!currentLocationPath.empty() && currentLocationPath[currentLocationPath.length() - 1] == '/')
+                    currentLocationPath.erase(currentLocationPath.length() - 1);
+                currentLocation.location_path = currentLocationPath;
+            }
             inLocation = true;
         }
     }
@@ -175,6 +205,8 @@ void Config::parseLines(std::ifstream& file) {
             currentServer.locations[currentLocationPath] = currentLocation;
         servers.push_back(currentServer);
     }
+    if (hasError)
+        exit(EXIT_FAILURE);
 }
 
 Config::Config(const std::string& filename) {
@@ -210,14 +242,15 @@ LocationConfig Config::getMergedLocationConfig(
     if (merged.upload_dir.empty()) 
         merged.upload_dir = server.upload_dir;
     
-    if (merged.cgi_path.empty()) 
-        merged.cgi_path = server.cgi_path;
+    if (merged.interpreters.empty()) 
+        merged.interpreters = server.interpreters;
         
     if (merged.scripts_path.empty()) 
         merged.scripts_path = server.scripts_path;
+
+    if (merged.autoindex == false) 
+        merged.autoindex = server.autoindex;
     
-    if (merged.cgi_ext.empty()) 
-        merged.cgi_ext = server.cgi_ext;
 
     // dla return
     if (merged.has_redirect == false) {

@@ -16,6 +16,7 @@ volatile sig_atomic_t CoreEngine::alive = true;
 
 void signalHandler(int sigNum)
 {
+    (void)sigNum;
     CoreEngine::alive = false;
 }
 
@@ -23,6 +24,7 @@ int main(int argc, char **argv)
 {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
+    std::signal(SIGPIPE, SIG_IGN);
 
 try
     {
@@ -54,3 +56,5 @@ catch(const std::exception& e)
 }
 return 0;
 }
+
+//tickl

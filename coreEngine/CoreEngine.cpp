@@ -4,7 +4,7 @@
 #include "../errors/error.hpp"
 
 CoreEngine::CoreEngine(const std::vector<ServerConfig> &serversCfg) : serversCfg(serversCfg), serv(NULL),
-   lSockNum(0), poolTimeout(1000), pollFDsNum(0), backlogNum(128), idleClientTimeout(60)
+   lSockNum(0), poolTimeout(1000), pollFDsNum(0), backlogNum(1024), idleClientTimeout(60)
 {
    memset(&hints, 0, sizeof(sockaddr_in));
    hints.ai_family = AF_UNSPEC;     // for both IP4 & IP6

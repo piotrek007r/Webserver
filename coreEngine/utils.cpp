@@ -12,6 +12,7 @@ CoreEngine::client &CoreEngine::getClientByFD(int socketFD)
 
 void CoreEngine::closeCLient(int el)
 {
+    // std::cout << "DEBUG: Closing client FD: " << pollFDs[el].fd << std::endl;
     for (size_t i = 0; i < clientVec.size(); i++)
         if (clientVec[i].FD == pollFDs[el].fd)
         {
@@ -20,17 +21,35 @@ void CoreEngine::closeCLient(int el)
         }
     close(pollFDs[el].fd);
     pollFDs.erase(pollFDs.begin() + el);
+    isClientFD.erase(isClientFD.begin() + el);
     pollFDsNum--;
 }
 
-std::string CoreEngine::prepareResponse(client &client, size_t el, size_t res)
+std::string CoreEngine::prepareResponse(client &client, size_t el, std::string rawRequest)
 {
-    std::cout << YELLOW << "-->This is request: " << client.requestBufferVec[res] << std::endl;
-    Http object(client.requestBufferVec[res], client.serverCfg);
+    static unsigned long long requestCounter = 0;
+    requestCounter++;
+    if (requestCounter % 500 == 0) {
+        std::cout << MAGENTA << ">>> Total requests processed: " << requestCounter << " <<<" << RESET << std::endl;
+    }
+
+    {
+        std::string::size_type eol = rawRequest.find("\r\n");
+        std::string firstLine = (eol == std::string::npos) ? rawRequest : rawRequest.substr(0, eol);
+        // std::cout << YELLOW << "--> Request: " << firstLine << " (" << rawRequest.size() << " bytes)" << RESET << std::endl;
+    }
+    Http object(rawRequest, client.serverCfg);
     if (object.getIsError())
         client.hasError = true;
     pollFDs[el].events = POLLOUT;
-    std::cout << ORANGE << "--> This is Response: " << object.getResponse().c_str()<< RESET << std::endl;
+    {
+        const std::string &resp = object.getResponse();
+        std::string::size_type eol = resp.find("\r\n");
+        std::string firstLine = (eol == std::string::npos) ? resp : resp.substr(0, eol);
+        // std::cout << ORANGE << "--> Response: " << firstLine << " (" << resp.size() << " bytes)" << RESET << std::endl;
+    }
+    if (object.shouldClose() || object.getResponse().find("Connection: close") != std::string::npos)
+        client.closeAfterSend = true;
     return object.getResponse();
 }
 

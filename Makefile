@@ -9,7 +9,6 @@ SRCS = main.cpp \
 		configReader/printConfig.cpp \
 		utils/utils.cpp \
 		errors/error.cpp \
-		http/test.cpp \
 		cgi/cgi.cpp
 
 
