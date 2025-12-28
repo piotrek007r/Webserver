@@ -251,8 +251,21 @@ void Http::cgiResponseBuilder() {
     
     std::map<std::string, std::string> envVars;
     
+    envVars["AUTH_TYPE"] = _s_requestData._headers["Authorization"];
+    envVars["CONTENT_LENGTH"] = _s_requestData._headers["Content-Length"];
+    envVars["CONTENT_TYPE"] = _s_requestData._headers["Content-Type"];
+    envVars["GATEWAY_INTERFACE"] = "CGI/1.1";
+    envVars["PATH_TRANSLATED"] = scriptPath;
+    envVars["REMOTE_ADDR"] = _s_requestData._headers["Host"];
+    envVars["REMOTE_HOST"] = _s_requestData._headers["Host"];
+    envVars["REMOTE_IDENT"] = "";
+    envVars["REMOTE_USER"] = "";
     envVars["REQUEST_METHOD"] = _s_requestData._method;
     envVars["SCRIPT_FILENAME"] = scriptPath;
+    envVars["SERVER_NAME"] = _serverData.server_name;
+    envVars["SERVER_PORT"] = _serverData.listen_port;
+    envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
+    envVars["SERVER_SOFTWARE"] = "WebServer/1.0";
     envVars["QUERY_STRING"] = _s_requestData._queryString;
     envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
     envVars["REQUEST_URI"] = _s_requestData._uri;
@@ -907,6 +920,9 @@ LocationConfig Http::getMyConfig() {
         myConfig.index = _serverData.index;
         myConfig.client_max_body_size = _serverData.client_max_body_size;
         myConfig.autoindex = _serverData.autoindex;
+        myConfig.has_redirect = _serverData.has_redirect;
+        myConfig.redirect_url = _serverData.redirect_url;
+        myConfig.redirect_code = _serverData.redirect_code;
         myConfig.upload_dir = _serverData.upload_dir;
         myConfig.interpreters = _serverData.interpreters;
         myConfig.scripts_path = _serverData.scripts_path;
