@@ -1,0 +1,249 @@
+/*
+ * OGÓLNY FLOW CAŁEGO PROJEKTU WEBSERV
+ * ====================================
+ *
+ * 1. START PROGRAMU
+ * ------------------
+ *   Plik: main.cpp
+ *
+ *   - Ustawienie handlerów sygnałów:
+ *       SIGINT, SIGTERM → ustawiają CoreEngine::alive = false
+ *       SIGPIPE → zignorowany
+ *
+ *   - Walidacja argumentów i wybór configu:
+ *       std::string filePath = inputCheck(argc, argv);  // utils/utils.hpp
+ *
+ *   - Parsowanie konfiguracji:
+ *       Config config(filePath);                        // configReader/config.hpp
+ *       const std::vector<ServerConfig> &servers = config.getServers();
+ *       config.printConfigs();
+ *
+ *   - Start silnika serwera:
+ *       CoreEngine engine(servers);                     // coreEngine/CoreEngine.hpp
+ *       engine.coreEngine();                            // główna pętla serwera
+ *
+ *
+ * 2. PARSOWANIE KONFIGURACJI
+ * --------------------------
+ *   Pliki: configReader/config.hpp, configReader/config.cpp
+ *
+ *   Struktury kluczowe:
+ *     - ServerConfig: listen_port, server_name, host, root, index,
+ *                     client_max_body_size, error_pages, allow_methods,
+ *                     interpreters, upload_dir, scripts_path, redirect*, locations...
+ *     - LocationConfig: jak wyżej, ale per /location (w tym regexy, autoindex, CGI itd.).
+ *
+ *   Flow:
+ *     - Config::Config(filename): otwiera plik konfiguracyjny (np. conf/default42.conf)
+ *       i wywołuje parseLines().
+ *     - parseLines() buduje vector<ServerConfig> servers:
+ *       • sekcja "server { ... }" → nowy ServerConfig,
+ *       • sekcja "location ... { ... }" → nowy/istniejący LocationConfig
+ *         w polu server.locations.
+ *     - Config::getServers() zwraca gotową listę serwerów do CoreEngine.
+ *     - Config::getMergedLocationConfig(server, location) scala ustawienia
+ *       servera i konkretnej lokacji (nadpisania per-location).
+ *
+ *
+ * 3. URUCHOMIENIE SOCKETÓW I POLL – COREENGINE
+ * --------------------------------------------
+ *   Pliki: coreEngine/CoreEngine.hpp, coreEngine/CoreEngine.cpp, coreEngine/poll.cpp,
+ *          coreEngine/utils.cpp
+ *
+ *   Konstruktor CoreEngine(const std::vector<ServerConfig>& serversCfg):
+ *     - Zapamiętuje konfiguracje serverów,
+ *     - Ustawia parametry domyślne (poolTimeout, backlogNum, idleClientTimeout itd.),
+ *     - Przygotowuje strukturę hints dla getaddrinfo().
+ *
+ *   3.1. Tworzenie gniazd nasłuchujących – CoreEngine::coreEngine()
+ *     - Dla każdego ServerConfig:
+ *         getaddrinfo(server.host, server.listen_port, &hints, &serv);
+ *         → dla każdego wyniku:
+ *             setSocket(j);                 // bind + listen + O_NONBLOCK
+ *             isClientFD.push_back(false);  // to jest gniazdo nasłuchujące
+ *             pollFDs.push_back({fd, POLLIN});
+ *             lSockNum++;
+ *     - Na koniec: pollFDsNum = lSockNum;  // liczba aktywnych fd w pollu.
+ *
+ *   3.2. Główna pętla poll – CoreEngine::coreEngine()
+ *     while (pollFDsNum > 0 && alive) {
+ *         poll(pollFDs, pollFDsNum, poolTimeout);
+ *
+ *         dla każdego fd w pollFDs:
+ *           - jeśli POLLIN na gnieździe nasłuchującym (i < lSockNum):
+ *                setConnection(i);        // nowy klient
+ *           - else jeśli POLLIN na kliencie:
+ *                recivNClose(i);         // odbiór danych od klienta
+ *           - jeśli POLLOUT:
+ *                sendToClient(i);        // wysyłanie odpowiedzi do klienta
+ *           - jeśli POLLHUP lub POLLERR:
+ *                closeCLient(i);         // zamknięcie połączenia/gniazda
+ *
+ *         dodatkowo: sprawdzanie timeoutów klientów (idleClientTimeout) i zamykanie nieaktywnych.
+ *     }
+ *
+ *
+ * 4. TWORZENIE NOWEGO KLIENTA
+ * ---------------------------
+ *   Plik: coreEngine/poll.cpp
+ *   Funkcja: CoreEngine::setConnection(size_t i)
+ *
+ *   - accept() na gnieździe nasłuchującym → nowy fd klienta.
+ *   - Tworzy strukturę client:
+ *       client.serverCfg = serversCfg[i];           // przypięcie konfiguracji serwera
+ *       client.parser.setMaxBodySize(...);         // jeśli ustawiono client_max_body_size
+ *       client.hasError = false;
+ *       client.closeAfterSend = false;
+ *       client.sendOffset = 0;
+ *       gettimeofday(&client.lastAction, NULL);
+ *   - Dodaje nowe fd do pollFDs z eventem POLLIN oraz do clientVec / isClientFD.
+ *
+ *
+ * 5. ODBIÓR DANYCH I PARSOWANIE REQUESTU
+ * --------------------------------------
+ *   Plik: coreEngine/poll.cpp
+ *   Funkcja: CoreEngine::recivNClose(size_t el)
+ *
+ *   - recv() → zapis do client.inputBuffer.
+ *   - Błędy recv() → generowany jest 500 (HttpError), przełączenie fd na POLLOUT.
+ *   - Po poprawnym odbiorze:
+ *       ParseStatus::Enum status = client.parser.consume(client.inputBuffer, client.byteRecived);
+ *
+ *   - RequestParser (Http.hpp/Http.cpp):
+ *       • Składa fragmenty w całość (_buffer),
+ *       • Szuka końca nagłówków, wycina je,
+ *       • Ustala Content-Length / Transfer-Encoding: chunked,
+ *       • Pilnuje limitu rozmiaru (client_max_body_size → _maxBodySize),
+ *       • Gdy pełny request gotowy → hasRequest() == true.
+ *
+ *   - Przy błędach parsowania:
+ *       • ParseStatus::Error_TooLarge     → failClient(413)
+ *       • ParseStatus::Error_InvalidFormat→ failClient(400)
+ *
+ *   - Gdy parser ma pełny request:
+ *       while (client.parser.hasRequest()) {
+ *           std::string req = client.parser.extractRequest();
+ *           client.sendBuffer += prepareResponse(client, el, req);
+ *           pollFDs[el].events = POLLOUT;
+ *       }
+ *
+ *
+ * 6. BUDOWANIE ODPOWIEDZI HTTP
+ * ----------------------------
+ *   Plik: coreEngine/utils.cpp
+ *   Funkcja: CoreEngine::prepareResponse(client&, size_t el, std::string rawRequest)
+ *
+ *   - Tworzy obiekt Http:
+ *       Http object(rawRequest, client.serverCfg);  // http/Http.hpp, Http.cpp
+ *
+ *   - Obiekt Http:
+ *       • parsuje linię startową, nagłówki, ciało (parseRequest, parseHeader),
+ *       • wybiera odpowiednią konfigurację (Location) przez getMyConfig(),
+ *       • przygotowuje HttpError z odpowiednimi error_pages,
+ *       • dla chunked: wywołuje chankuj() (dekodowanie chunków),
+ *       • sprawdza rozmiar body (isBodySizeAllowed),
+ *       • wybiera metodę: GET/POST/DELETE/PUT w responseBuilder().
+ *
+ *   - Po zbudowaniu odpowiedzi:
+ *       • object.getResponse() → pełny HTTP response (status + nagłówki + body),
+ *       • jeśli powinno się zamknąć połączenie → client.closeAfterSend = true.
+ *
+ *
+ * 7. MODUŁ HTTP – ROUTING, STATYKI, UPLOAD, CGI
+ * ---------------------------------------------
+ *   Plik: http/Http.cpp, http/Http.hpp
+ *
+ *   Najważniejsze elementy:
+ *     - parseRequest / parseHeader: rozbija request na metody, URI, HTTP-version, headers.
+ *     - getMyConfig():
+ *         • na podstawie _s_requestData._uri szuka najlepiej pasującej lokacji
+ *           (dokładne ścieżki, regexy),
+ *         • scala ustawienia serwera i lokacji (applyLocationOverride).
+ *     - isBodySizeAllowed(): sprawdza, czy ciało nie przekracza client_max_body_size.
+ *     - isMethodAllowed(): sprawdza, czy metoda jest dozwolona w tej lokacji.
+ *     - isCGI(): sprawdza, czy żądany zasób powinien być obsłużony jako CGI
+ *       (na podstawie rozszerzenia i mapy interpreters).
+ *
+ *     - responseBuilder(): główne wejście do logiki HTTP
+ *         • specjal-case /favicon.ico → 204
+ *         • globalny check rozmiaru body (413)
+ *         • jeśli CGI → cgiResponseBuilder()
+ *         • jeśli metoda niedozwolona → 405
+ *         • w przeciwnym razie: wywołuje getResponseBuilder() / postResponseBuilder()
+ *           / deleteResponseBuilder() / putResponseBuilder().
+ *
+ *   Statyczne pliki
+ *     - GET: budowanie ścieżki z root + uri, sprawdzenie istnienia pliku,
+ *       obsługa index, autoindex itp.
+ *
+ *   Upload/POST
+ *     - POST: jeśli Content-Type: multipart/form-data → parsowanie części (parseMultipartFilePart),
+ *       zapisywanie plików do upload_dir, walidacja rozszerzeń, itp.
+ *
+ *   CGI
+ *     - isCGI() → jeśli plik CGI / skrypt → cgiResponseBuilder().
+ *     - cgiResponseBuilder():
+ *         • buduje zmienne środowiskowe (CONTENT_LENGTH, CONTENT_TYPE, QUERY_STRING, itp.),
+ *         • wywołuje executeCgi() z modułu cgi.
+ *
+ *
+ * 8. MODUŁ CGI
+ * ------------
+ *   Pliki: cgi/cgi.hpp, cgi/cgi.cpp
+ *
+ *   - Funkcja executeCgi(scriptPath, interpreterPath, body, envVars):
+ *       • Tworzy pipe’y, fork’uje proces dziecka,
+ *       • Ustawia env, przekierowuje stdin/stdout do pipe’ów,
+ *       • Uruchamia interpreter (np. python3) ze skryptem,
+ *       • Rodzic zbiera output CGI i zwraca go jako string.
+ *   - Http::cgiResponseBuilder() dobudowuje nagłówki HTTP i zawartość odpowiedzi z outputu CGI.
+ *
+ *
+ * 9. OBSŁUGA BŁĘDÓW
+ * -----------------
+ *   Pliki: errors/error.hpp, errors/error.cpp
+ *
+ *   - Klasa HttpError:
+ *       • Przechowuje mapę error_pages (konfiguracja lub default),
+ *       • Dla podanego kodu (400, 403, 404, 405, 413, 500, 502, itd.)
+ *         generuje pełną odpowiedź HTTP ze stroną błędu.
+ *
+ *   - Wykorzystanie:
+ *       • CoreEngine::failClient(..., code) → generateErrorResponse(code),
+ *       • Http (np. przy 404, 405, 413, 500) → _httpError.generateErrorResponse(code).
+ *
+ *
+ * 10. WYSYŁKA ODPOWIEDZI DO KLIENTA
+ * ---------------------------------
+ *   Plik: coreEngine/poll.cpp
+ *   Funkcja: CoreEngine::sendToClient(size_t el)
+ *
+ *   - Rozpoczyna, gdy pollFDs[el].events zawiera POLLOUT.
+ *   - send() fragmentu client.sendBuffer począwszy od sendOffset.
+ *   - Obsługuje częściowe wysyłki (jeśli wysłano mniej niż długość bufora).
+ *   - Po wysłaniu całości:
+ *       • jeśli client.hasError lub client.closeAfterSend → closeCLient(el),
+ *       • w przeciwnym razie czyści sendBuffer, resetuje sendOffset i przełącza fd z powrotem na POLLIN.
+ *
+ *
+ * 11. ZAMYKANIE GINAZD I SPRZĄTANIE
+ * ---------------------------------
+ *   - CoreEngine::~CoreEngine(): zamyka wszystkie listening sockets i aktywne FDy klientów.
+ *   - closeCLient(int el): usuwa klienta z pollFDs, map isClientFD, zamyka fd, czyści clientVec.
+ *
+ *
+ * PODSUMOWANIE – HIGH LEVEL FLOW
+ * -------------------------------
+ *   main → Config → CoreEngine
+ *   CoreEngine:
+ *     - Tworzy listening sockets z ServerConfig,
+ *     - Pętla poll: akceptuje klientów, odbiera dane, woła RequestParser,
+ *       buduje Http i odpowiedzi, wysyła je i zamyka połączenia.
+ *   Http:
+ *     - Mapuje URI na serwer/lokację, sprawdza metody, limity rozmiaru, statyki,
+ *       uploady, CGI, generuje HTTP response lub błąd.
+ *   CGI:
+ *     - Uruchamia skrypty zewnętrzne i zwraca wynik jako odpowiedź HTTP.
+ *   Errors:
+ *     - Dla każdego błędu generuje gotowy response HTTP (z konfiguracją stron błędów).
+ */

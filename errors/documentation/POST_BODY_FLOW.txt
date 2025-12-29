@@ -1,0 +1,162 @@
+/*
+ * MAPA PRZEPŁYWU DANYCH DLA POST I LIMITU ROZMIARU (client_max_body_size)
+ *
+ * 1. KONFIGURACJA (ETAP WCZYTANIA CONF)
+ *    - Pliki: configReader/config.cpp, http/Http.cpp
+ *    - Dyrektywa z conf: "client_max_body_size" (w bajtach).
+ *    - Wartość trafia do:
+ *         ServerConfig::client_max_body_size
+ *         LocationConfig::client_max_body_size
+ *
+ * 2. TWORZENIE KLIENTA I USTAWIENIE LIMITU PARSERA
+ *    - Plik: coreEngine/poll.cpp
+ *    - Funkcja: CoreEngine::setConnection(size_t i)
+ *
+ *      client.serverCfg = serversCfg[i];
+ *      if (!client.serverCfg.client_max_body_size.empty()) {
+ *          size_t limit = std::strtoul(client.serverCfg.client_max_body_size.c_str(), NULL, 10);
+ *          client.parser.setMaxBodySize(limit);
+ *      }
+ *
+ *    - W TYM MOMENCIE parser (RequestParser) dostaje maksymalny rozmiar ciała requestu
+ *      dla danego połączenia (na podstawie serwera / lokacji).
+ *
+ * 3. ODBIÓR DANYCH Z GNIAZDA (READ)
+ *    - Plik: coreEngine/poll.cpp
+ *    - Funkcja: CoreEngine::recivNClose(size_t el)
+ *
+ *      client.byteRecived = recv(...);
+ *      ParseStatus::Enum status = client.parser.consume(client.inputBuffer, client.byteRecived);
+ *
+ *    - Cały strumień (nagłówki + body) przechodzi przez RequestParser::consume().
+ *
+ * 4. PARSER REQUESTU – PIERWSZY STRAŻNIK ROZMIARU
+ *    - Plik: http/Http.cpp
+ *    - Klasa: RequestParser
+ *    - Funkcja: RequestParser::consume(const char* buffer, size_t length)
+ *
+ *    4.1. Po zebraniu nagłówków:
+ *         - Parser znajduje "\r\n\r\n" i wycina nagłówki.
+ *         - Szuka "Content-Length:" → ustawia _contentLength.
+ *         - Sprawdza czy jest "Transfer-Encoding: chunked" → ustawia _isChunked.
+ *
+ *         - DLA ZWYKŁEGO (NIE-CHUNKED) POSTA:
+ *               if (!_isChunked && _contentLength > _maxBodySize)
+ *                   return ParseStatus::Error_TooLarge;
+ *
+ *           → Jeśli nagłówek Content-Length od razu deklaruje zbyt duży rozmiar,
+ *             parser zwraca Error_TooLarge JESZCZE PRZED DOCZYTANIEM CAŁEGO BODY.
+ *
+ *    4.2. Dla "Transfer-Encoding: chunked":
+ *
+ *         - Parser czeka na sekwencję "0\r\n\r\n" (koniec chunków).
+ *         - Jednocześnie pilnuje limitu bufora względem _maxBodySize:
+ *
+ *               size_t limit = _maxBodySize + (50 * 1024 * 1024); // margines na narzut chunków
+ *               if (_buffer.size() - _bodyStart > limit)
+ *                   return ParseStatus::Error_TooLarge;
+ *
+ *         → Jeśli zdekodowane dane chunked przekroczą dopuszczalny limit + margines,
+ *           parser zwraca Error_TooLarge.
+ *
+ * 5. REAKCJA COREENGINE NA ZBYT DUŻY REQUEST
+ *    - Nadal w coreEngine/poll.cpp, w CoreEngine::recivNClose:
+ *
+ *         if (status == ParseStatus::Error_TooLarge) {
+ *             failClient(el, client, 413);
+ *             return;
+ *         }
+ *
+ *    - Funkcja: CoreEngine::failClient(size_t el, client &client, int code)
+ *      Plik: coreEngine/poll.cpp
+ *
+ *         HttpError errorHandler;
+ *         client.hasError = true;
+ *         client.sendOffset = 0;
+ *         client.sendBuffer = errorHandler.generateErrorResponse(413);
+ *         pollFDs[el].events = POLLOUT;
+ *         client.parser.reset();
+ *
+ *    - W TYM MOMENCIE POST jest ODRZUCONY NA POZIOMIE PARSERA/COREENGINE:
+ *      • Ustawiany jest status 413 Content Too Large,
+ *      • Wypełniany jest bufor odpowiedzi klienta,
+ *      • pollfd przełączany jest na POLLOUT,
+ *      • parser resetowany.
+ *
+ *    - Następnie CoreEngine::sendToClient() wysyła tę odpowiedź 413 i zamyka
+ *      połączenie (bo client.hasError == true).
+ *
+ * 6. PRZEKAZANIE POPRAWNEGO REQUESTU DO MODUŁU HTTP
+ *    - Jeżeli parser NIE zwróci błędu:
+ *
+ *         while (client.parser.hasRequest()) {
+ *             std::string req = client.parser.extractRequest();
+ *             client.sendBuffer += prepareResponse(client, el, req);
+ *             pollFDs[el].events = POLLOUT;
+ *         }
+ *
+ *    - Plik: coreEngine/utils.cpp
+ *    - Funkcja: CoreEngine::prepareResponse(...)
+ *
+ *         Http object(rawRequest, client.serverCfg);
+ *
+ *      → Powstaje obiekt Http, który dostaje cały zparsowany request jako string.
+ *
+ * 7. DRUGI STRAŻNIK ROZMIARU – Http::isBodySizeAllowed()
+ *    - Plik: http/Http.cpp
+ *    - Funkcja: Http::isBodySizeAllowed()
+ *
+ *         if (_myConfig.client_max_body_size.empty()) return true;
+ *         size_t maxBodySize = std::atoi(_myConfig.client_max_body_size.c_str());
+ *         szukamy nagłówka "Content-Length";
+ *
+ *         a) Jeśli Content-Length jest:
+ *                if (contentLength > maxBodySize) return false;
+ *
+ *         b) Jeśli brak Content-Length (np. chunked albo brak nagłówka):
+ *                if (_bodyLen > maxBodySize) return false;
+ *
+ *    - Funkcja wywoływana jest w dwóch miejscach:
+ *
+ *      7.1. W konstruktorze Http, SPECJALNIE dla chunked:
+ *
+ *             if (_s_requestData._headers["Transfer-Encoding"] == "chunked") {
+ *                 if (!isBodySizeAllowed()) {
+ *                     _s_responseData._hasError = true;
+ *                     _s_responseData._responseStatusCode = 413;
+ *                     _s_responseData._response = _httpError.generateErrorResponse(413);
+ *                     return;
+ *                 }
+ *             }
+ *
+ *          → Po zdekodowaniu chunków (`chankuj`) sprawdzany jest rzeczywisty rozmiar
+ *            ciała POST vs. client_max_body_size. Jeśli za duży → 413.
+ *
+ *      7.2. W Http::responseBuilder() – GLOBALNY check przed obsługą metody:
+ *
+ *             if (!isBodySizeAllowed()) {
+ *                 _s_responseData._hasError = true;
+ *                 _s_responseData._responseStatusCode = 413;
+ *                 _s_responseData._response = _httpError.generateErrorResponse(413);
+ *                 return;
+ *             }
+ *
+ *          → Dla zwykłych POST (z Content-Length) oraz przypadków bez chunked,
+ *            Http jeszcze raz weryfikuje rozmiar ciała na podstawie nagłówka lub
+ *            długości _bodyLen.
+ *
+ * 8. ODPOWIEDŹ KOŃCOWA
+ *    - Jeśli którykolwiek z powyższych strażników wykryje za duży POST:
+ *         • Najpierw następuje ustawienie kodu 413 i wygenerowanie strony błędu
+ *           przez HttpError,
+ *         • CoreEngine ustawia client.hasError i przełącza socket w tryb wysyłania,
+ *         • CoreEngine::sendToClient() wysyła 413 i zazwyczaj zamyka połączenie.
+ *
+ * PODSUMOWANIE – KLUCZOWE MOMENTY ODRZUCENIA ZA DUŻEGO POSTA:
+ *   1) RequestParser::consume() → zwraca ParseStatus::Error_TooLarge
+ *      (limit z setMaxBodySize, Content-Length > limit, lub chunked > limit+margines).
+ *   2) Http::isBodySizeAllowed() w konstruktorze (dla chunked)
+ *      oraz w Http::responseBuilder() (przed wyborem metody, np. POST).
+ *   3) W obu przypadkach kończy się to wygenerowaniem odpowiedzi 413
+ *      Content Too Large i przerwaniem dalszego przetwarzania POST.
+ */

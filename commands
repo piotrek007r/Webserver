@@ -41,3 +41,5 @@ curl -X POST --data-binary @./payload http://localhost:8080/directory/youpi.bla 
 
 curl -X POST --data-binary @./payload http://localhost:8080/directory/youpi.bla -v
 
+git fetch origin
+git reset --hard origin/debug-gbu
