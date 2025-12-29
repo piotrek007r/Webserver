@@ -930,7 +930,10 @@ LocationConfig Http::getMyConfig() {
         _s_requestData._request = _s_requestData._uri;
     } else {
         myConfig = Config::getMergedLocationConfig(_serverData, baseLoc);
-        _s_requestData._request = _s_requestData._uri.substr(baseKey.length());
+        if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri[baseKey.length()] == '/')
+            _s_requestData._request = _s_requestData._uri.substr(baseKey.length());
+        else if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri.length() != baseKey.length())
+            _s_requestData._request = _s_requestData._uri;
     }
 
     if (regexFound)
