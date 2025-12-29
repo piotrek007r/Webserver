@@ -7,6 +7,8 @@
 #include <iostream>
 #include <cstdlib>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 void trim(std::string& s) {
     size_t start = s.find_first_not_of(" \t\r\n");
@@ -108,6 +110,14 @@ void Config::parseLines(std::ifstream& file) {
             std::string upload_dir; iss >> upload_dir;
             if (!upload_dir.empty() && upload_dir[upload_dir.length() - 1] != '/')
                 upload_dir = upload_dir + "/";
+            if (!upload_dir.empty()) {
+                if (access(upload_dir.c_str(), F_OK) != 0) {
+                    if (mkdir(upload_dir.c_str(), 0777) != 0) {
+                        std::cout << "Upload path does not exist and could not be created: " << upload_dir << "\n";
+                        hasError = true;
+                    }
+                }
+            }
             if (inLocation)
                 currentLocation.upload_dir = upload_dir;
             else
@@ -139,9 +149,12 @@ void Config::parseLines(std::ifstream& file) {
             std::string scripts_path; iss >> scripts_path;
             if (!scripts_path.empty() && scripts_path[scripts_path.length() - 1] != '/')
                 scripts_path = scripts_path + "/";
-            if (access(scripts_path.c_str(), F_OK) != 0 )
-                {std::cout << "Scripts path does not exist\n";
-                hasError = true;}
+            if (access(scripts_path.c_str(), F_OK) != 0 ) {
+                if (mkdir(scripts_path.c_str(), 0777) != 0) {
+                    std::cout << "Scripts path does not exist and could not be created: " << scripts_path << "\n";
+                    hasError = true;
+                }
+            }
             if (inLocation)
                 currentLocation.scripts_path = scripts_path;
             else
@@ -151,9 +164,12 @@ void Config::parseLines(std::ifstream& file) {
             std::string r; iss >> r;
             if(!r.empty() && r[r.length() - 1] != '/')
                 r = r + "/";
-            if (access(r.c_str(), F_OK) != 0 )
-                {std::cout << "Root path does not exist\n";
-                hasError = true;}
+            if (access(r.c_str(), F_OK) != 0 ) {
+                 if (mkdir(r.c_str(), 0777) != 0) {
+                    std::cout << "Root path does not exist and could not be created: " << r << "\n";
+                    hasError = true;
+                }
+            }
             if (inLocation)
                 currentLocation.root = r;
             else

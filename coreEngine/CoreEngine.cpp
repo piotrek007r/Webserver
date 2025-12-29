@@ -53,7 +53,7 @@ void CoreEngine::setSocket(size_t i)
       // unsigned int i = 0;
       // while (i < socketFD.size())
       // {
-      //    close(socketFD[i]);
+         close(socketFD[i]);
       //    i++;
       // }
       throw (std::runtime_error("Binding socket failed, exiting."));

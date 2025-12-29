@@ -18,13 +18,11 @@
 		</style>
 </head>
 <body>
-			<header>
-				<h1>/test — minimal demo</h1>
-				<div class="muted">GET • POST (upload) • DELETE</div>
-			</header>
-	<main>
-
-		<!-- GET -->
+		<header>
+			<h1>/test — minimal demo</h1>
+			<div class="muted">GET • POST (upload) • DELETE</div>
+		</header>
+	<main>		<!-- GET -->
 				<section class="card" id="get-card">
 					<h2>GET</h2>
 					<div class="row">
@@ -44,14 +42,25 @@
 					</div>
 					<div id="post-resp" class="response" hidden></div>
 				</section>
+				
+		<!-- POST to CGI (get_date.py) -->
+		<section class="card" id="post-cgi-card">
+			<h2>POST to CGI (get_date.py)</h2>
+			<div class="row">
+				<input id="cgi-data" type="text" value="test_param=hello&name=world" placeholder="query params or raw data" />
+				<button class="btn" id="btn-post-cgi">POST to CGI</button>
+			</div>
+			<div id="post-cgi-resp" class="response" hidden></div>
+		</section>
 
 		<!-- DELETE -->
 				<section class="card" id="delete-card">
 					<h2>DELETE</h2>
 					<div class="row">
-						<input id="del-url" type="text" value="/test/testfile.txt" placeholder="/test/testfile.txt" />
+						<input id="del-file" type="text" placeholder="filename" />
 						<button class="btn danger" id="btn-del">DELETE</button>
 					</div>
+					<div id="del-listing" class="response" hidden></div>
 					<div id="del-resp" class="response" hidden></div>
 				</section>
 
@@ -127,22 +136,101 @@
 			}
 		});
 
-		// DELETE
-		document.getElementById('btn-del').addEventListener('click', async () => {
-			const url = (document.getElementById('del-url').value || '').trim();
-			const respBox = document.getElementById('del-resp');
-					if (!url.startsWith('/test')) {
-						return showResp(respBox, false, 'Use a path under /test ...');
-			}
-					if (!confirm(`Delete file: ${url}?`)) return;
+		// POST to CGI (get_date.py) – wysyłamy zwykły POST bez multipart
+		document.getElementById('btn-post-cgi').addEventListener('click', async () => {
+			const data = (document.getElementById('cgi-data').value || '').trim();
+			const respBox = document.getElementById('post-cgi-resp');
 			try {
-				const res = await fetch(url, { method: 'DELETE' });
+				const res = await fetch('/test/get_date.py', { 
+					method: 'POST', 
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body: data || 'timestamp=' + Date.now()
+				});
 				const body = await res.text();
 				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
 			} catch (e) {
 						showResp(respBox, false, `Error: ${e.message}`);
 			}
 		});
+
+		// Load delete listing
+		async function loadDeleteListing() {
+			const listBox = document.getElementById('del-listing');
+			const delFileInput = document.getElementById('del-file');
+			listBox.hidden = false;
+			listBox.className = 'response';
+			listBox.textContent = 'Loading /uploads ...';
+			try {
+				const res = await fetch('/uploads', { method: 'GET' });
+				if (res.status === 403 || res.status === 401 || res.status === 405) {
+					listBox.textContent = 'listing not allowed';
+					return;
+				}
+				if (!res.ok) {
+					listBox.textContent = `Failed to list: ${res.status} ${res.statusText}`;
+					return;
+				}
+				const body = await res.text();
+				
+				// Parse HTML listing to extract filenames from <a> tags
+				const parser = new DOMParser();
+				const doc = parser.parseFromString(body, 'text/html');
+				const links = doc.querySelectorAll('a');
+				const entries = [];
+				
+				links.forEach((link) => {
+					const href = link.getAttribute('href');
+					if (href && href !== '..' && href !== '../') {
+						entries.push(href);
+					}
+				});
+				
+				if (!entries.length) {
+					listBox.textContent = 'No entries in /uploads';
+					return;
+				}
+				listBox.innerHTML = '';
+				entries.forEach((item) => {
+					const row = document.createElement('div');
+					row.className = 'row';
+					const label = document.createElement('code');
+					label.textContent = item;
+					const btn = document.createElement('button');
+					btn.type = 'button';
+					btn.className = 'btn secondary';
+					btn.textContent = 'Use';
+					btn.addEventListener('click', () => {
+						delFileInput.value = item;
+					});
+					row.appendChild(label);
+					row.appendChild(btn);
+					listBox.appendChild(row);
+				});
+			} catch (e) {
+				listBox.textContent = `Error: ${e.message}`;
+			}
+		}
+
+		// DELETE
+		document.getElementById('btn-del').addEventListener('click', async () => {
+			const filename = (document.getElementById('del-file').value || '').trim();
+			const respBox = document.getElementById('del-resp');
+			if (!filename) {
+				return showResp(respBox, false, 'Enter a filename');
+			}
+			const url = '/uploads/' + filename;
+			if (!confirm(`Delete file: ${url}?`)) return;
+			try {
+				const res = await fetch(url, { method: 'DELETE' });
+				const body = await res.text();
+				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
+				if (res.ok) loadDeleteListing();
+			} catch (e) {
+				showResp(respBox, false, `Error: ${e.message}`);
+			}
+		});
+
+		loadDeleteListing();
 	</script>
 </body>
 </html>
