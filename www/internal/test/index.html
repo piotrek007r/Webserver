@@ -43,15 +43,16 @@
 					<div id="post-resp" class="response" hidden></div>
 				</section>
 				
-		<!-- POST to CGI (get_date.py) -->
-		<section class="card" id="post-cgi-card">
-			<h2>POST to CGI (get_date.py)</h2>
-			<div class="row">
-				<input id="cgi-data" type="text" value="test_param=hello&name=world" placeholder="query params or raw data" />
-				<button class="btn" id="btn-post-cgi">POST to CGI</button>
-			</div>
-			<div id="post-cgi-resp" class="response" hidden></div>
-		</section>
+		<!-- POST to CGI -->
+	<section class="card" id="post-cgi-card">
+		<h2>POST to CGI</h2>
+		<div class="row">
+			<input id="cgi-path" type="text" value="/test/get_date.py" placeholder="/test/get_date.py" />
+			<input id="cgi-data" type="text" value="test_param=hello&name=world" placeholder="query params or raw data" />
+			<button class="btn" id="btn-post-cgi">POST to CGI</button>
+		</div>
+		<div id="post-cgi-resp" class="response" hidden></div>
+	</section>
 
 		<!-- DELETE -->
 				<section class="card" id="delete-card">
@@ -136,12 +137,14 @@
 			}
 		});
 
-		// POST to CGI (get_date.py) – wysyłamy zwykły POST bez multipart
+		// POST to CGI – wysyłamy zwykły POST bez multipart
 		document.getElementById('btn-post-cgi').addEventListener('click', async () => {
 			const data = (document.getElementById('cgi-data').value || '').trim();
+			let path = (document.getElementById('cgi-path').value || '').trim();
 			const respBox = document.getElementById('post-cgi-resp');
+			if (!path.startsWith('/')) path = '/' + path;
 			try {
-				const res = await fetch('/test/get_date.py', { 
+				const res = await fetch(path, { 
 					method: 'POST', 
 					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 					body: data || 'timestamp=' + Date.now()
