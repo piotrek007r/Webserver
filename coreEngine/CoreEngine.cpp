@@ -50,8 +50,13 @@ void CoreEngine::setSocket(size_t i)
    if (bind(socketFD[i], serv->ai_addr, serv->ai_addrlen) == -1)
    {
       std::cerr << "bind() failed: " << strerror(errno) << std::endl;
-      close(socketFD[i]);
-      return;
+      // unsigned int i = 0;
+      // while (i < socketFD.size())
+      // {
+      //    close(socketFD[i]);
+      //    i++;
+      // }
+      throw (std::runtime_error("Binding socket failed, exiting."));
    }
    // last param for listen in number of connection allowed on the incoming queue
    if (listen(socketFD[i], backlogNum) == -1)
