@@ -2,6 +2,7 @@ NAME = webserv
 
 SRCS = main.cpp \
 		http/Http.cpp \
+		http/RequestParser.cpp \
 		coreEngine/CoreEngine.cpp \
 		coreEngine/poll.cpp \
 		coreEngine/utils.cpp \

@@ -14,7 +14,8 @@ GET http://localhost:8080/directory/youpi.bla
 
 ./ubuntu_tester http://localhost:8080
 
-asdasqwe
+(printf "Chunk1"; sleep 1; printf "Chunk2"; sleep 1; printf "Chunk3") | curl -v -X POST -H "Transfer-Encoding: chunked" -T - http://localhost:8080/twoj-endpoint
+
 
 # Test 1: Małe body (powinno zwrócić 405 Method Not Allowed)
 curl -X POST -d "test" http://localhost:8080/directory/youpi.bla

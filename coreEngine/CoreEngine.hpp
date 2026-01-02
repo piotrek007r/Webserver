@@ -24,6 +24,7 @@
 #include "../configReader/config.hpp"
 #include "../errors/error.hpp"
 #include "../http/Http.hpp"
+#include "../http/RequestParser.hpp"
 
 class CoreEngine
 {
