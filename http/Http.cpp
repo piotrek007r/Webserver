@@ -41,24 +41,32 @@ static void applyLocationOverride(LocationConfig &base, const LocationConfig &ov
 
 // Constructor
 Http::Http (std::string &rawRequest, ServerConfig serverData){
+    initMembers(rawRequest, serverData);
+    requestBilder(rawRequest);
 
-    // Initialize primitive types
+    _myConfig = getMyConfig();
+    parseQueryAndFileName();
+    
+    // Initialize HttpError with server or location-specific error pages
+    _httpError = HttpError(_myConfig.error_pages);
+
+    checkChunkedBodySize();
+    if (_s_responseData._hasError) return;
+
+    responseBuilder();
+}
+
+void Http::initMembers(std::string &rawRequest, ServerConfig serverData) {
     _rawRequestPtr = NULL;
     _bodyStart = 0;
     _bodyLen = 0;
     
-
-    //std::cout << "Debug: Entering Http constructor" << std::endl;
-
     _rawRequestPtr = &rawRequest;
     _serverData = serverData;
-    
-    requestBilder(rawRequest);
+}
 
-    // Get location-specific configuration
-    // _myConfig = 0;
-    _myConfig = getMyConfig();
-        size_t queryPos = _s_requestData._request.find('?');
+void Http::parseQueryAndFileName() {
+    size_t queryPos = _s_requestData._request.find('?');
     if (queryPos != std::string::npos) {
         _s_requestData._queryString =  _s_requestData._request.substr(queryPos + 1);
         _s_requestData._fileName = _s_requestData._request.substr(0, queryPos);
@@ -66,30 +74,18 @@ Http::Http (std::string &rawRequest, ServerConfig serverData){
     else {
         _s_requestData._fileName = _s_requestData._request;
     }
-    while (_s_requestData._fileName[0] == '/')
-    _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
-    
-    // Debug - sprawdź wartości po getMyConfig()
-    // std::cout << YELLOW << "DEBUG _myConfig.has_redirect: " << _myConfig.has_redirect << RESET << std::endl;
-    // std::cout << YELLOW << "DEBUG _myConfig.redirect_url: '" << _myConfig.redirect_url << "'" << RESET << std::endl;
-    // std::cout << YELLOW << "DEBUG _myConfig.redirect_code: " << _myConfig.redirect_code << RESET << std::endl;
-    
-    // Initialize HttpError with server or location-specific error pages
-    _httpError = HttpError(_myConfig.error_pages);
+    while (!_s_requestData._fileName.empty() && _s_requestData._fileName[0] == '/')
+        _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
+}
 
+void Http::checkChunkedBodySize() {
     if (_s_requestData._headers["Transfer-Encoding"] == "chunked") {
         if (!isBodySizeAllowed()) {
             _s_responseData._hasError = true;
             _s_responseData._responseStatusCode = 413;
             _s_responseData._response = _httpError.generateErrorResponse(413);
-            return;
         }
     }
-
-    responseBuilder();
-    //testResponseBuilder();
-    // std::cout << GREEN << "Debug: Exiting Http constructor" << std::endl;
-    // std::cout << _s_responseData._response << RESET << std::endl;
 }
 void Http::chankuj(std::string& rawRequest) 
  {
@@ -1078,78 +1074,108 @@ ParseStatus::Enum RequestParser::consume(const char* buffer, size_t length) {
     _buffer.append(buffer, length);
 
     if (!_headerParsed) {
-        size_t headerEnd = _buffer.find("\r\n\r\n");
-        if (headerEnd != std::string::npos) {
-            _headerParsed = true;
-            _bodyStart = headerEnd + 4;
-            std::string headers = _buffer.substr(0, headerEnd);
-            // std::cout << "DEBUG: Headers parsed. Body start at " << _bodyStart << std::endl;
-            
-            size_t pos = headers.find("Content-Length:");
-            if (pos != std::string::npos) {
-                _contentLength = std::strtoul(headers.c_str() + pos + 15, NULL, 10);
-            } else {
-                _contentLength = 0;
-            }
-
-            if (headers.find("Transfer-Encoding: chunked") != std::string::npos) {
-                _isChunked = true;
-            }
-            
-             if (!_isChunked && _contentLength > _maxBodySize) {
-                return ParseStatus::Error_TooLarge;
-            }
-        }
+        ParseStatus::Enum status = parseHeaders();
+        if (status != ParseStatus::Continue) return status;
     }
 
     if (_headerParsed) {
         if (_isChunked) {
-            if (_buffer.size() > _bodyStart + 1000000) {
-                 static size_t lastReportedSizeChunked = 0;
-                 if (_buffer.size() > lastReportedSizeChunked + 1000000) {
-                     std::cout << "DEBUG: Received chunked data, buffer size: " << _buffer.size() << " bytes" << std::endl;
-                     lastReportedSizeChunked = _buffer.size();
-                 }
-            }
-
-            size_t searchStart = _bodyStart;
-            if (_buffer.size() > length + 20) {
-                size_t calculatedStart = _buffer.size() - length - 20;
-                if (calculatedStart > _bodyStart) searchStart = calculatedStart;
-            }
-
-            if (_buffer.find("0\r\n\r\n", searchStart) != std::string::npos) {
-                return ParseStatus::Done;
-            }
-            
-            // Allow overhead for chunked encoding (e.g. 50% more to be safe, or just a fixed buffer)
-            // The strict check is done in Http::isBodySizeAllowed after decoding
-            size_t limit = _maxBodySize + (50 * 1024 * 1024); 
-            if (_buffer.size() - _bodyStart > limit) {
-                std::cout << "DEBUG: Chunked body too large. Size: " << (_buffer.size() - _bodyStart) << ", Limit: " << limit << std::endl;
-                return ParseStatus::Error_TooLarge;
-            }
+            return processChunkedBody(length);
         } else {
-            // Debugging for large body
-            if (_contentLength > 1000000) {
-                 static size_t lastReportedSize = 0;
-                 if (_buffer.size() > lastReportedSize + 1000000) {
-                     std::cout << "DEBUG: Received " << _buffer.size() << " / " << (_bodyStart + _contentLength) << " bytes" << std::endl;
-                     lastReportedSize = _buffer.size();
-                 }
-            }
-
-            if (_buffer.size() >= _bodyStart + _contentLength) {
-                return ParseStatus::Done;
-            }
+            return processRegularBody();
         }
     }
     
+    return checkHeaderSize();
+}
+
+ParseStatus::Enum RequestParser::parseHeaders() {
+    size_t headerEnd = _buffer.find("\r\n\r\n");
+    if (headerEnd != std::string::npos) {
+        _headerParsed = true;
+        _bodyStart = headerEnd + 4;
+        std::string headers = _buffer.substr(0, headerEnd);
+        
+        size_t pos = headers.find("Content-Length:");
+        if (pos != std::string::npos) {
+            _contentLength = std::strtoul(headers.c_str() + pos + 15, NULL, 10);
+        } else {
+            _contentLength = 0;
+        }
+
+        if (headers.find("Transfer-Encoding: chunked") != std::string::npos) {
+            _isChunked = true;
+        }
+        
+            if (!_isChunked && _contentLength > _maxBodySize) {
+            return ParseStatus::Error_TooLarge;
+        }
+    }
+    return ParseStatus::Continue;
+}
+
+ParseStatus::Enum RequestParser::processChunkedBody(size_t length) {
+    logChunkedProgress();
+
+    if (isChunkedBodyComplete(length)) {
+        return ParseStatus::Done;
+    }
+    
+    return checkChunkedBodyLimit();
+}
+
+void RequestParser::logChunkedProgress() {
+    if (_buffer.size() > _bodyStart + 1000000) {
+            static size_t lastReportedSizeChunked = 0;
+            if (_buffer.size() > lastReportedSizeChunked + 1000000) {
+                std::cout << "DEBUG: Received chunked data, buffer size: " << _buffer.size() << " bytes" << std::endl;
+                lastReportedSizeChunked = _buffer.size();
+            }
+    }
+}
+
+bool RequestParser::isChunkedBodyComplete(size_t length) {
+    size_t searchStart = _bodyStart;
+    if (_buffer.size() > length + 20) {
+        size_t calculatedStart = _buffer.size() - length - 20;
+        if (calculatedStart > _bodyStart) searchStart = calculatedStart;
+    }
+
+    return _buffer.find("0\r\n\r\n", searchStart) != std::string::npos;
+}
+
+ParseStatus::Enum RequestParser::checkChunkedBodyLimit() {
+    // Allow overhead for chunked encoding (e.g. 50% more to be safe, or just a fixed buffer)
+    // The strict check is done in Http::isBodySizeAllowed after decoding
+    size_t limit = _maxBodySize + (50 * 1024 * 1024); 
+    if (_buffer.size() - _bodyStart > limit) {
+        std::cout << "DEBUG: Chunked body too large. Size: " << (_buffer.size() - _bodyStart) << ", Limit: " << limit << std::endl;
+        return ParseStatus::Error_TooLarge;
+    }
+    return ParseStatus::Continue;
+}
+
+ParseStatus::Enum RequestParser::processRegularBody() {
+    // Debugging for large body
+    if (_contentLength > 1000000) {
+            static size_t lastReportedSize = 0;
+            if (_buffer.size() > lastReportedSize + 1000000) {
+                std::cout << "DEBUG: Received " << _buffer.size() << " / " << (_bodyStart + _contentLength) << " bytes" << std::endl;
+                lastReportedSize = _buffer.size();
+            }
+    }
+
+    if (_buffer.size() >= _bodyStart + _contentLength) {
+        return ParseStatus::Done;
+    }
+    return ParseStatus::Continue;
+}
+
+ParseStatus::Enum RequestParser::checkHeaderSize() {
     if (!_headerParsed && _buffer.size() > 16384) {
         std::cout << "DEBUG: Header too large. Size: " << _buffer.size() << std::endl;
         return ParseStatus::Error_InvalidFormat;
     }
-
     return ParseStatus::Continue;
 }
 

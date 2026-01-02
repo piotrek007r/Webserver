@@ -58,6 +58,15 @@ class RequestParser {
         size_t _bodyStart;
         size_t _chunkedPos; // Tracks position in chunked body
 
+        ParseStatus::Enum parseHeaders();
+        ParseStatus::Enum processChunkedBody(size_t length);
+        ParseStatus::Enum processRegularBody();
+        ParseStatus::Enum checkHeaderSize();
+
+        void logChunkedProgress();
+        bool isChunkedBodyComplete(size_t length);
+        ParseStatus::Enum checkChunkedBodyLimit();
+
     public:
         RequestParser();
         void setMaxBodySize(size_t size);
@@ -161,7 +170,9 @@ class Http {
         std::string getCGIinterpreter(const std::string& fileName);
         void chankuj(std::string& rawRequest);
 
-
+        void initMembers(std::string &rawRequest, ServerConfig serverData);
+        void parseQueryAndFileName();
+        void checkChunkedBodySize();
 
         void cgiResponseBuilder();
         void getResponseBuilder();
