@@ -12,7 +12,7 @@ void CoreEngine::failClient(size_t el, client &client, int code)
    client.sendOffset = 0;
    client.sendBuffer = errorHandler.generateErrorResponse(code);
    pollFDs[el].events = POLLOUT;
-   client.parser.reset();
+   // client.parser.reset();
 }
 
 void CoreEngine::failClient(size_t el, client &client, int code, const char *message)
@@ -22,7 +22,7 @@ void CoreEngine::failClient(size_t el, client &client, int code, const char *mes
    client.sendOffset = 0;
    client.sendBuffer = errorHandler.generateErrorResponse(code, message);
    pollFDs[el].events = POLLOUT;
-   client.parser.reset();
+   // client.parser.reset();
 }
 
 void CoreEngine::setConnection(size_t i)
@@ -31,15 +31,12 @@ void CoreEngine::setConnection(size_t i)
    client client;
    memset(&client.clientSockaddr, 0, sizeof(sockaddr_in));
    client.serverCfg = serversCfg[i];
+   client.http.setServerConfig(client.serverCfg);
    client.hasError = false;
    client.closeAfterSend = false;
    client.sendOffset = 0;
    gettimeofday(&client.lastAction, NULL);
 
-   if (!client.serverCfg.client_max_body_size.empty()) {
-       size_t limit = std::strtoul(client.serverCfg.client_max_body_size.c_str(), NULL, 10);
-       client.parser.setMaxBodySize(limit);
-   }
 
    client.FD = accept(pollFDs[i].fd, (struct sockaddr *)&client.clientSockaddr, &addrLen);
    if (client.FD == -1)
@@ -88,20 +85,26 @@ void CoreEngine::recivNClose(size_t el)
       return;
    }
 
-   ParseStatus::Enum status = client.parser.consume(client.inputBuffer, client.byteRecived);
+   ParseStatus::Enum status = client.http.consume(client.inputBuffer, client.byteRecived);
    
    if (status == ParseStatus::Error_TooLarge) {
-       failClient(el, client, 413);
+       client.hasError = true;
+       client.sendOffset = 0;
+       client.sendBuffer = client.http.getResponse();
+       pollFDs[el].events = POLLOUT;
        return;
    } else if (status == ParseStatus::Error_InvalidFormat) {
        failClient(el, client, 400);
        return;
    }
 
-   while (client.parser.hasRequest()) {
-       std::string req = client.parser.extractRequest();
-       client.sendBuffer += prepareResponse(client, el, req);
+   if (status == ParseStatus::Done) {
+       client.sendBuffer += client.http.getResponse();
        pollFDs[el].events = POLLOUT;
+       if (client.http.shouldClose()) {
+           client.closeAfterSend = true;
+       }
+       // TODO: Handle pipelining / reset Http
    }
 }
 
@@ -156,6 +159,7 @@ void CoreEngine::sendToClient(size_t el)
    }
    client.sendBuffer.clear();
    client.sendOffset = 0;
+   client.http.reset();
    pollFDs[el].events = POLLIN;
    // std::cout << "client: " << pollFDs[el].fd << " ready to send" << std::endl;
 }

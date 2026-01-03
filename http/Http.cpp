@@ -8,12 +8,24 @@
 #include <unistd.h>
 #include <regex.h>
 #include <algorithm>
+#include <limits>
+#include <cerrno>
 
 static bool extractBoundary(const std::string& contentType, std::string& boundaryOut);
 static bool parseMultipartFilePart(const std::string& body,
                                    const std::string& boundary,
                                    MultipartFile& out,
                                    const std::string& fieldName);
+
+static size_t safeParseSize(const std::string& value) {
+    errno = 0;
+    char* end = NULL;
+    unsigned long long v = std::strtoull(value.c_str(), &end, 10);
+    if (errno == ERANGE || v > static_cast<unsigned long long>(std::numeric_limits<size_t>::max())) {
+        return std::numeric_limits<size_t>::max();
+    }
+    return static_cast<size_t>(v);
+}
 
 static bool regexMatch(const std::string &pattern, const std::string &text)
 {
@@ -25,199 +37,205 @@ static bool regexMatch(const std::string &pattern, const std::string &text)
     return rc == 0;
 }
 
-static void applyLocationOverride(LocationConfig &base, const LocationConfig &over)
+// Constructor
+Http::Http (std::string &rawRequest, ServerConfig serverData) 
+    : _serverData(serverData), _state(STATE_REQUEST_LINE), 
+      _contentLength(0), _isChunked(false), _chunkSize(0), 
+      _bodyBytesReceived(0) 
 {
-    if (!over.client_max_body_size.empty()) base.client_max_body_size = over.client_max_body_size;
-    if (!over.index.empty()) base.index = over.index;
-    if (!over.upload_dir.empty()) base.upload_dir = over.upload_dir;
-    if (!over.scripts_path.empty()) base.scripts_path = over.scripts_path;
-    if (!over.root.empty()) base.root = over.root;
-    if (!over.allow_methods.empty()) base.allow_methods = over.allow_methods;
-    for (std::map<std::string, std::string>::const_iterator it = over.interpreters.begin(); it != over.interpreters.end(); ++it)
-        base.interpreters[it->first] = it->second;
-    if (!over.error_pages.empty()) base.error_pages = over.error_pages;
-    if (over.has_redirect) { base.has_redirect = true; base.redirect_code = over.redirect_code; base.redirect_url = over.redirect_url; }
+    _rawRequestPtr = &rawRequest;
+    requestBilder(rawRequest);
 }
 
-// Constructor
-Http::Http (std::string &rawRequest, ServerConfig serverData){
+void Http::requestBilder(std::string &rawRequest) {
+    consume(rawRequest.c_str(), rawRequest.length());
+}
 
-    // Initialize primitive types
-    _rawRequestPtr = NULL;
-    _bodyStart = 0;
-    _bodyLen = 0;
-    
+ParseStatus::Enum Http::consume(const char* buffer, size_t length) {
+    // If already in error state, reject any new data and return immediately without re-parsing
+    if (_s_responseData._hasError && _state == STATE_COMPLETE && !_s_responseData._response.empty()) {
+        std::cout << RED << "DEBUG: Already sent error response, ignoring new data" << RESET << std::endl;
+        return ParseStatus::Done;
+    }
 
-    //std::cout << "Debug: Entering Http constructor" << std::endl;
+    _parsingBuffer.append(buffer, length);
+    while (true) {
+        if (_state == STATE_REQUEST_LINE) parseRequestLine();
+        else if (_state == STATE_HEADERS) parseHeaders();
+        else if (_state == STATE_BODY) parseBody();
+        else if (_state == STATE_CHUNK_SIZE || _state == STATE_CHUNK_DATA) parseChunkedBody();
+        else if (_state == STATE_CHUNK_TRAILER) _state = STATE_COMPLETE;
+        else if (_state == STATE_COMPLETE) {
+            handleRequestCompletion();
+            return ParseStatus::Done;
+        }
 
-    _rawRequestPtr = &rawRequest;
-    _serverData = serverData;
-    
-    requestBilder(rawRequest);
+        if (_s_responseData._hasError && _state == STATE_COMPLETE) {
+            // Error was set during parsing (e.g., body too large)
+            // Call handleRequestCompletion to generate the error response
+            std::cout << RED << "DEBUG: Error state detected during parsing, calling handleRequestCompletion" << RESET << std::endl;
+            handleRequestCompletion();
+            return ParseStatus::Done;
+        }
+        
+        if ((_state == STATE_REQUEST_LINE || _state == STATE_HEADERS) && 
+            _parsingBuffer.find("\r\n") == std::string::npos) break;
+        if (_state == STATE_BODY && _parsingBuffer.size() < _contentLength) break;
+        if (_state == STATE_CHUNK_DATA && _parsingBuffer.size() < _chunkSize + 2) {
+            std::cout << YELLOW << "DEBUG WAITING FOR CHUNK DATA: have=" << _parsingBuffer.size()
+                      << " need=" << (_chunkSize + 2) << RESET << std::endl;
+            break;
+        }
+        if (_state == STATE_CHUNK_SIZE && _parsingBuffer.find("\r\n") == std::string::npos) {
+            std::cout << YELLOW << "DEBUG WAITING FOR CHUNK SIZE LINE" << RESET << std::endl;
+            break;
+        }
+    }
+    return ParseStatus::Continue;
+}
 
-    // Get location-specific configuration
-    // _myConfig = 0;
+void Http::parseRequestLine() {
+    size_t pos = _parsingBuffer.find("\r\n");
+    if (pos == std::string::npos) return;
+    std::string line = _parsingBuffer.substr(0, pos);
+    _parsingBuffer.erase(0, pos + 2);
+
+    // Ignore stray empty lines (e.g., keep-alive with extra CRLF) instead of treating them as a broken request.
+    if (line.empty()) {
+        return;
+    }
+
+    std::istringstream iss(line);
+    iss >> _s_requestData._method >> _s_requestData._uri >> _s_requestData._httpVersion;
+    _state = STATE_HEADERS;
+}
+
+void Http::parseHeaders() {
+    size_t pos = _parsingBuffer.find("\r\n");
+    if (pos == std::string::npos) return;
+    std::string line = _parsingBuffer.substr(0, pos);
+    _parsingBuffer.erase(0, pos + 2);
+    if (line.empty()) {
+        processHeadersEnd();
+        return;
+    }
+    size_t colon = line.find(": ");
+    if (colon != std::string::npos) {
+        _s_requestData._headers[line.substr(0, colon)] = line.substr(colon + 2);
+    }
+}
+
+void Http::processHeadersEnd() {
+    // Populate config NOW so we can check limits during body/chunk parsing
     _myConfig = getMyConfig();
-        size_t queryPos = _s_requestData._request.find('?');
-    if (queryPos != std::string::npos) {
-        _s_requestData._queryString =  _s_requestData._request.substr(queryPos + 1);
-        _s_requestData._fileName = _s_requestData._request.substr(0, queryPos);
-    }
-    else {
-        _s_requestData._fileName = _s_requestData._request;
-    }
-    while (_s_requestData._fileName[0] == '/')
-    _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
-    
-    // Debug - sprawdź wartości po getMyConfig()
-    // std::cout << YELLOW << "DEBUG _myConfig.has_redirect: " << _myConfig.has_redirect << RESET << std::endl;
-    // std::cout << YELLOW << "DEBUG _myConfig.redirect_url: '" << _myConfig.redirect_url << "'" << RESET << std::endl;
-    // std::cout << YELLOW << "DEBUG _myConfig.redirect_code: " << _myConfig.redirect_code << RESET << std::endl;
-    
-    // Initialize HttpError with server or location-specific error pages
     _httpError = HttpError(_myConfig.error_pages);
 
-    if (_s_requestData._headers["Transfer-Encoding"] == "chunked") {
-        if (!isBodySizeAllowed()) {
-            _s_responseData._hasError = true;
-            _s_responseData._responseStatusCode = 413;
-            _s_responseData._response = _httpError.generateErrorResponse(413);
-            return;
-        }
-    }
+    std::cout << YELLOW << "DEBUG: Config for " << _s_requestData._uri << ": limit=" 
+              << (_myConfig.client_max_body_size.empty() ? "(empty)" : _myConfig.client_max_body_size) 
+              << RESET << std::endl;
 
-    responseBuilder();
-    //testResponseBuilder();
-    // std::cout << GREEN << "Debug: Exiting Http constructor" << std::endl;
-    // std::cout << _s_responseData._response << RESET << std::endl;
-}
-void Http::chankuj(std::string& rawRequest) 
- {
-    std::string unchunkedBody;
-    size_t pos = _bodyStart;
-
-    while (pos < rawRequest.size()) {
-        size_t lineEnd = rawRequest.find("\r\n", pos);
-        if (lineEnd == std::string::npos)
-            break;
-
-        std::string sizeStr = rawRequest.substr(pos, lineEnd - pos);
-        size_t chunkSize = std::strtoul(sizeStr.c_str(), NULL, 16);
-        if (chunkSize == 0)
-            break; // Last chunk
-
-        pos = lineEnd + 2; // Move past \r\n
-        // Ensure there is enough data remaining for this chunk
-        if (pos > rawRequest.size())
-            break;
-        if (chunkSize > rawRequest.size() - pos)
-            break;
-
-        unchunkedBody.append(rawRequest, pos, chunkSize);
-
-        // Move past chunk and trailing \r\n, ensuring we stay in bounds
-        if (chunkSize + 2 > rawRequest.size() - pos)
-            break;
-        pos += chunkSize + 2;
-        if (chunkSize == 0) break; // Last chunk
-    }
-    // Replace the original body with the unchunked body
-    rawRequest.replace(_bodyStart, _bodyLen, unchunkedBody);
-    _bodyLen = unchunkedBody.size();
-}
-
-void Http::requestBilder(std::string &rawRequest) 
-{
-    parseRequest(rawRequest);
-    parseHeader();
-    if (_s_requestData._headers["Transfer-Encoding"] == "chunked")
-        chankuj(rawRequest);
-}
-
-// Parse HTTP request
-void Http::parseRequest(std::string &rawRequest) {
-    size_t headerEnd = rawRequest.find("\r\n\r\n");
-    if (headerEnd != std::string::npos) {
-        _s_requestData._rawHeader = rawRequest.substr(0, headerEnd);
-        _rawRequestPtr = &rawRequest;
-        _bodyStart = headerEnd + 4;
-        _bodyLen = rawRequest.length() - (headerEnd + 4);
+    if (_s_requestData._headers.count("Content-Length")) {
+        _contentLength = std::strtoul(_s_requestData._headers["Content-Length"].c_str(), NULL, 10);
+        _state = STATE_BODY;
+    } else if (_s_requestData._headers["Transfer-Encoding"] == "chunked") {
+        _isChunked = true;
+        _state = STATE_CHUNK_SIZE;
     } else {
-        _s_requestData._rawHeader = rawRequest;
-        // Debug output
-        std::cout << RED << "=== NO \\r\\n\\r\\n FOUND, RAW HEADER ===\n"
-                    << _s_requestData._rawHeader
-                    << "\n=== END ===" << std::endl;
-        std::cout << "=== RAW REQUEST ===\n" 
-                    << rawRequest
-                    << "\n=== END RAW REQUEST ===" << RESET << std::endl;
-        _rawRequestPtr = NULL;
-        _bodyStart = 0;
-        _bodyLen = 0;
+        _state = STATE_COMPLETE;
     }
-
-}
-
-// Parse HTTP headers
-void Http::parseHeader() {
-    std::istringstream stream(_s_requestData._rawHeader);
-    std::string line;
-
-    if (std::getline(stream, line)) {
-        std::istringstream lineStream(line);
-        std::string method, path, version;
-        
-        lineStream >> method >> path >> version;
     
-        if (!version.empty() && version[version.length() - 1] == '\r') {
-            version.erase(version.length() - 1);
+    // Check body size limit early
+    if (!isBodySizeAllowed()) {
+        _s_responseData._hasError = true;
+        _s_responseData._responseStatusCode = 413;
+        // Set to COMPLETE so the main loop calls handleRequestCompletion
+        // and generates the 413 response before returning to the caller
+        _state = STATE_COMPLETE;
+    }
+}
+
+void Http::parseBody() {
+    if (_parsingBuffer.size() >= _contentLength) {
+        _bodyBuffer = _parsingBuffer.substr(0, _contentLength);
+        _parsingBuffer.erase(0, _contentLength);
+        _state = STATE_COMPLETE;
+        _bodyLen = _bodyBuffer.size();
+        _bodyStart = 0;
+    }
+}
+
+void Http::parseChunkedBody() {
+    if (_state == STATE_CHUNK_SIZE) {
+        size_t pos = _parsingBuffer.find("\r\n");
+        if (pos == std::string::npos) return;
+        std::string line = _parsingBuffer.substr(0, pos);
+        _chunkSize = std::strtoul(line.c_str(), NULL, 16);
+        _parsingBuffer.erase(0, pos + 2);
+        std::cout << YELLOW << "DEBUG CHUNK SIZE: " << _chunkSize << RESET << std::endl;
+        
+        // Check limit AFTER reading chunk size but BEFORE trying to read chunk data
+        if (_chunkSize > 0 && !_myConfig.client_max_body_size.empty()) {
+            size_t maxBodySize = safeParseSize(_myConfig.client_max_body_size);
+            size_t futureSize = _bodyBuffer.size() + _chunkSize;
+            if (futureSize > maxBodySize) {
+                std::cout << RED << "DEBUG: CHUNK SIZE EXCEEDS LIMIT (" << futureSize << " > " << maxBodySize << "), REJECTING" << RESET << std::endl;
+                _s_responseData._hasError = true;
+                _s_responseData._responseStatusCode = 413;
+                _s_responseData._response.clear();
+                _state = STATE_COMPLETE;
+                _parsingBuffer.clear();
+                return;
+            }
         }
         
-        _s_requestData._method = method;
-        _s_requestData._uri = path;
-        _s_requestData._httpVersion = version;
-    }
+        _state = (_chunkSize == 0) ? STATE_CHUNK_TRAILER : STATE_CHUNK_DATA;
+    } else if (_state == STATE_CHUNK_DATA) {
+        if (_parsingBuffer.size() >= _chunkSize + 2) {
+            // Check limit BEFORE appending to avoid buffering huge bodies
+            size_t futureSize = _bodyBuffer.size() + _chunkSize;
+            if (!_myConfig.client_max_body_size.empty()) {
+                size_t maxBodySize = safeParseSize(_myConfig.client_max_body_size);
+                if (futureSize > maxBodySize) {
+                    std::cout << RED << "DEBUG: BODY WOULD BE TOO LARGE (" << futureSize << " > " << maxBodySize << "), REJECTING" << RESET << std::endl;
+                    _s_responseData._hasError = true;
+                    _s_responseData._responseStatusCode = 413;
+                    _s_responseData._response.clear();
+                    _state = STATE_COMPLETE;
+                    // Clear parsing buffer to stop processing more data
+                    _parsingBuffer.clear();
+                    return;
+                }
+            }
 
-    // Parse headers
-    // std::cout << CYAN << "=== INCOMING REQUEST HEADERS ===" << RESET << std::endl;
-    while (std::getline(stream, line)) {
-        if (line == "\r" || line.empty()) {
-            break; // End of headers
-        }
-        if (!line.empty() && line[line.length() - 1] == '\r') {
-            line = line.substr(0, line.length() - 1); // Remove trailing \r
-        }
-        size_t delimiterPos = line.find(": ");
-        if (delimiterPos != std::string::npos) {
-            std::string key = line.substr(0, delimiterPos);
-            std::string value = line.substr(delimiterPos + 2);
-            _s_requestData._headers[key] = value;
-            // std::cout << CYAN << key << ": " << value << RESET << std::endl;
+            _bodyBuffer.append(_parsingBuffer.substr(0, _chunkSize));
+            _parsingBuffer.erase(0, _chunkSize + 2);
+            std::cout << YELLOW << "DEBUG CHUNK APPENDED, BODY NOW: " << _bodyBuffer.size() << RESET << std::endl;
+            _state = STATE_CHUNK_SIZE;
         }
     }
-    // std::cout << CYAN << "=== END HEADERS ===" << RESET << std::endl;
 }
+
 
 bool Http::isBodySizeAllowed() {
     if (_myConfig.client_max_body_size.empty()) {
+        std::cout << YELLOW << "DEBUG isBodySizeAllowed: no limit configured" << RESET << std::endl;
         return true;
     }
     
-    size_t maxBodySize = static_cast<size_t>(std::atoi(_myConfig.client_max_body_size.c_str()));
-    std::map<std::string, std::string>::iterator it = _s_requestData._headers.find("Content-Length");
-    
-    if (it != _s_requestData._headers.end()) {
-        size_t contentLength = static_cast<size_t>(std::atoi(it->second.c_str()));
-        if (contentLength > maxBodySize) {
-            return false;
-        }
-    } else {
-        // For chunked encoding or when Content-Length is missing, check the actual body size
-        if (_bodyLen > maxBodySize) {
-            return false;
-        }
-    }
+    size_t maxBodySize = safeParseSize(_myConfig.client_max_body_size);
+    const size_t bodySize = getCurrentBodySize();
+
+    std::cout << YELLOW << "DEBUG isBodySizeAllowed: body=" << bodySize << " max=" << maxBodySize 
+              << " result=" << (bodySize <= maxBodySize ? "OK" : "TOO_LARGE") << RESET << std::endl;
+
+    if (bodySize > maxBodySize) return false;
     return true;
+}
+
+size_t Http::getCurrentBodySize() const {
+    if (_isChunked) return _bodyBuffer.size();
+    if (!_bodyBuffer.empty()) return _bodyBuffer.size();
+    return _contentLength;
 }
 
 std::string Http::getCGIinterpreter(const std::string& fileName) {
@@ -244,10 +262,7 @@ void Http::cgiResponseBuilder() {
     //     return;
     // }
     
-    std::string body;
-    if (_rawRequestPtr != NULL && _bodyLen > 0) {
-        body = _rawRequestPtr->substr(_bodyStart, _bodyLen);
-    }
+    std::string body = _bodyBuffer;
     
     std::map<std::string, std::string> envVars;
     
@@ -327,6 +342,34 @@ void Http::getResponseBuilder() {
         }
     } else {
         std::cout << "File not found: " << _s_requestData._fileName << std::endl;
+
+        // Only serve index fallbacks when the request targets a directory (empty file name).
+        if (_s_requestData._fileName.empty()) {
+            // Fallback 1: Location Index
+            if (!_myConfig.index.empty()) {
+                std::string indexPath = _myConfig.root;
+                if (!indexPath.empty() && indexPath[indexPath.length() - 1] != '/') indexPath += "/";
+                indexPath += _myConfig.index;
+                
+                if (resourceExists(indexPath) && isFile(indexPath)) {
+                    handleFile(indexPath);
+                    return;
+                }
+            }
+
+            // Fallback 2: Server Root Index
+            if (!_serverData.index.empty()) {
+                std::string serverIndexPath = _serverData.root;
+                if (!serverIndexPath.empty() && serverIndexPath[serverIndexPath.length() - 1] != '/') serverIndexPath += "/";
+                serverIndexPath += _serverData.index;
+                
+                if (resourceExists(serverIndexPath) && isFile(serverIndexPath)) {
+                    handleFile(serverIndexPath);
+                    return;
+                }
+            }
+        }
+
         sendError(404);
         return;
     }
@@ -527,9 +570,7 @@ void Http::handleRootPath() {
 
 
 void Http::putResponseBuilder() {
-    if (_rawRequestPtr == NULL) { sendError(400); return; }
-
-    std::string reqBody = _rawRequestPtr->substr(_bodyStart, _bodyLen);
+    std::string reqBody = _bodyBuffer;
 
     if (_myConfig.upload_dir.empty()) {
         std::ostringstream html;
@@ -622,93 +663,11 @@ void Http::putResponseBuilder() {
 
 // Build POST response
 void Http::postResponseBuilder() {
-    if (_rawRequestPtr == NULL) { sendError(400); return; }
-
-    std::string reqBody = _rawRequestPtr->substr(_bodyStart, _bodyLen);
-
     if (_myConfig.upload_dir.empty()) {
-        std::ostringstream html;
-        html << "<html><body>"
-             << "<h1>POST Data Received</h1>"
-             << "<p>Content-Length: " << reqBody.size() << " bytes</p>"
-             << "<pre>" << reqBody << "</pre>"
-             << "</body></html>";
-        const std::string respBody = html.str();
-
-        std::ostringstream response;
-        response << "HTTP/1.1 200 OK\r\n"
-                 << "Content-Type: text/html\r\n"
-                 << "Content-Length: " << respBody.size() << "\r\n"
-                 << "Connection: keep-alive\r\n"
-                 << "\r\n"
-                 << respBody;
-
-        _s_responseData._response = response.str();
-        _s_responseData._responseStatusCode = 200;
+        handleSimplePost();
         return;
     }
-
-    std::string contentType = "";
-    std::map<std::string, std::string>::iterator it = _s_requestData._headers.find("Content-Type");
-    if (it != _s_requestData._headers.end()) contentType = it->second;
-
-    std::string boundary;
-    if (contentType.find("multipart/form-data") == std::string::npos || !extractBoundary(contentType, boundary)) {
-        sendError(400);
-        return;
-    }
-
-    MultipartFile mf;
-
-    if (!parseMultipartFilePart(reqBody, boundary, mf, "file")) {
-        if (!parseMultipartFilePart(reqBody, boundary, mf, "")) {
-            sendError(400);
-            return;
-        }
-    }
-
-    std::string fullPath = _myConfig.upload_dir + mf.filename;
-
-    {
-        int probe = open(fullPath.c_str(), O_RDONLY);
-        if (probe != -1) {
-            close(probe);
-            std::ostringstream oss;
-            oss << _myConfig.upload_dir << "/" << std::time(NULL) << "_" << mf.filename;
-            fullPath = oss.str();
-        }
-    }
-
-    int fd = open(fullPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd == -1) { sendError(500); return; }
-
-    ssize_t written = write(fd, mf.data.data(), mf.data.size());
-    close(fd);
-
-    if (written == -1 || static_cast<size_t>(written) != mf.data.size()) {
-        std::remove(fullPath.c_str());
-        sendError(500);
-        return;
-    }
-
-    std::ostringstream html;
-    html << "<html><body>"
-         << "<h1>File Uploaded</h1>"
-         << "<p>Saved as: " << mf.filename << "</p>"
-         << "<p>Bytes: " << mf.data.size() << "</p>"
-         << "</body></html>";
-    const std::string respBody = html.str();
-
-    std::ostringstream response;
-    response << "HTTP/1.1 201 Created\r\n"
-             << "Content-Type: text/html\r\n"
-             << "Content-Length: " << respBody.size() << "\r\n"
-             << "Connection: keep-alive\r\n"
-             << "\r\n"
-             << respBody;
-
-    _s_responseData._response = response.str();
-    _s_responseData._responseStatusCode = 201;
+    handleMultipartPost();
 }
 
 // Build DELETE response
@@ -731,27 +690,33 @@ void Http::deleteResponseBuilder() {
 }
 
 void Http::deleteFile(const std::string& filePath) {
+    std::cout << YELLOW << "DEBUG: Attempting to delete file: " << filePath << RESET << std::endl;
 
     if (filePath.find("..") != std::string::npos) {
+        std::cout << RED << "DEBUG: Delete failed - path contains '..'" << RESET << std::endl;
         sendError(403); 
         return;
     }
     
     if (filePath.find(_myConfig.upload_dir) != 0) {
+        std::cout << RED << "DEBUG: Delete failed - path not in upload dir: " << _myConfig.upload_dir << RESET << std::endl;
         sendError(403); 
         return;
     }
 
     if (access(filePath.c_str(), W_OK) != 0) {
+        std::cout << RED << "DEBUG: Delete failed - no write access" << RESET << std::endl;
         sendError(403); 
         return;
     }
     
     if (std::remove(filePath.c_str()) != 0) {
+        std::cout << RED << "DEBUG: Delete failed - std::remove error" << RESET << std::endl;
         sendError(500);
         return;
     }
     
+    std::cout << GREEN << "DEBUG: File deleted successfully" << RESET << std::endl;
     std::ostringstream response;
     response << "HTTP/1.1 204 No Content\r\n"
              << "Access-Control-Allow-Origin: *\r\n";
@@ -769,18 +734,22 @@ void Http::deleteFile(const std::string& filePath) {
 }
 
 void Http::deleteDirectory(const std::string& dirPath) {
+    std::cout << YELLOW << "DEBUG: Attempting to delete directory: " << dirPath << RESET << std::endl;
     std::string urlPath = _s_requestData._uri;
     if (urlPath[urlPath.length() - 1] != '/') {
+        std::cout << RED << "DEBUG: Delete dir failed - URI missing trailing slash" << RESET << std::endl;
         sendError(409); 
         return;
     }
     
     if (access(dirPath.c_str(), W_OK) != 0) {
+        std::cout << RED << "DEBUG: Delete dir failed - no write access" << RESET << std::endl;
         sendError(403);
         return;
     }
     
     if (rmdir(dirPath.c_str()) != 0) {
+        std::cout << RED << "DEBUG: Delete dir failed - rmdir error: " << errno << RESET << std::endl;
         if (errno == ENOTEMPTY || errno == EEXIST) {
             sendError(409); 
         } else {
@@ -831,125 +800,31 @@ bool Http::isMethodAllowed() {
 }
 
 void Http::responseBuilder() {
+    if (handleFavicon()) return;
+    if (checkBodySize()) return;
 
-    if (_s_requestData._uri == "/favicon.ico") {
-        _s_responseData._response = "HTTP/1.1 204 No Content\r\n"
-                                   "Connection: close\r\n"
-                                   "\r\n";
-        return;
-    }
-
-    if (!isBodySizeAllowed()) {
-        _s_responseData._hasError = true;
-        _s_responseData._responseStatusCode = 413;
-        _s_responseData._response = _httpError.generateErrorResponse(413);
-        return;
-    }
-
-    if (isCGI()) {
+    if ((_s_requestData._method == "GET" || _s_requestData._method == "POST") && isCGI()) {
         cgiResponseBuilder();
         return;
     }
-   if (!isMethodAllowed()) {
-        _s_responseData._hasError = true;
-        _s_responseData._responseStatusCode = 405;
-        _s_responseData._response = _httpError.generateErrorResponse(405);
-        return;
-    }
     
-    // Obsłuż według metody
-    if (_s_requestData._method == "GET") {
-        getResponseBuilder();
-    } else if (_s_requestData._method == "POST") {
-        postResponseBuilder();
-    } else if (_s_requestData._method == "DELETE") {
-        deleteResponseBuilder();
-    } else if (_s_requestData._method == "PUT") {
-        putResponseBuilder();
-    } else {
-        _s_responseData._hasError = true;
-        _s_responseData._responseStatusCode = 501;
-        _s_responseData._response = _httpError.generateErrorResponse(501);
-    }
+    if (checkMethodAllowed()) return;
+    
+    dispatchMethod();
 }
 
 LocationConfig Http::getMyConfig() {
     LocationConfig myConfig;
-    
-    myConfig.location_path = "";
-    myConfig.root = "";
-    myConfig.index = "";
-    myConfig.autoindex = false;
-    myConfig.client_max_body_size = "";
-    myConfig.upload_dir = "";
-    myConfig.has_redirect = false;
-    myConfig.redirect_url = "";
-    myConfig.redirect_code = 0;
-    myConfig.allow_methods.clear();
-    myConfig.error_pages.clear();
-    
     bool baseFound = false;
     std::string baseKey;
     LocationConfig baseLoc;
     bool regexFound = false;
     LocationConfig regexLoc;
 
-    for (std::map<std::string, LocationConfig>::iterator it = _serverData.locations.begin();
-         it != _serverData.locations.end(); ++it) {
-        const LocationConfig &loc = it->second;
+    findLocationConfig(myConfig, baseFound, baseKey, baseLoc, regexFound, regexLoc);
 
-        if (loc.is_regex) {
-            if (!loc.regex_pattern.empty() && regexMatch(loc.regex_pattern, _s_requestData._uri)) {
-                if (!regexFound) { regexFound = true; regexLoc = loc; }
-            }
-            continue;
-        }
+    finalizeLocationConfig(myConfig, baseFound, baseKey, baseLoc, regexFound, regexLoc);
 
-        if (_s_requestData._uri.find(it->first) == 0) {
-            if (!baseFound || it->first.length() > baseKey.length()) {
-                baseFound = true;
-                baseKey = it->first;
-                baseLoc = loc;
-            }
-        }
-    }
-
-    if (!baseFound) {
-        myConfig.root = _serverData.root;
-        myConfig.allow_methods = _serverData.allow_methods;
-        myConfig.index = _serverData.index;
-        myConfig.client_max_body_size = _serverData.client_max_body_size;
-        myConfig.autoindex = _serverData.autoindex;
-        myConfig.has_redirect = _serverData.has_redirect;
-        myConfig.redirect_url = _serverData.redirect_url;
-        myConfig.redirect_code = _serverData.redirect_code;
-        myConfig.upload_dir = _serverData.upload_dir;
-        myConfig.interpreters = _serverData.interpreters;
-        myConfig.scripts_path = _serverData.scripts_path;
-        myConfig.error_pages = _serverData.error_pages;
-        _s_requestData._request = _s_requestData._uri;
-    } else {
-        myConfig = Config::getMergedLocationConfig(_serverData, baseLoc);
-        if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri[baseKey.length()] == '/')
-            _s_requestData._request = _s_requestData._uri.substr(baseKey.length());
-        else if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri.length() != baseKey.length())
-            _s_requestData._request = _s_requestData._uri;
-    }
-
-    if (regexFound)
-        applyLocationOverride(myConfig, regexLoc);
-
-    if (!myConfig.location_path.empty() && myConfig.location_path[myConfig.location_path.length() - 1] == '/')
-        myConfig.location_path.erase(myConfig.location_path.length() - 1);
-
-    if (!myConfig.location_path.empty() && myConfig.location_path[0] != '/' && !myConfig.is_regex)
-        myConfig.location_path = "/" + myConfig.location_path;
-
-    if (myConfig.location_path.empty() && baseFound)
-        myConfig.location_path = baseKey;
-
-    if (myConfig.location_path.empty() && !baseFound)
-        myConfig.location_path = "";
     return myConfig;
 }
 
@@ -1069,119 +944,305 @@ static bool parseMultipartFilePart(const std::string& body,
     }
 }
 
-RequestParser::RequestParser() 
-    : _maxBodySize(100*1024*1024), _headerParsed(false), _contentLength(0), _isChunked(false), _bodyStart(0) {}
+// // RequestParser::RequestParser() request parser ma zniknac, nie uzywamy tej klasy
+//     : _maxBodySize(100*1024*1024), _headerParsed(false), _contentLength(0), _isChunked(false), _bodyStart(0) {}
 
-void RequestParser::setMaxBodySize(size_t size) { _maxBodySize = size; }
+// void RequestParser::setMaxBodySize(size_t size) { _maxBodySize = size; }
 
-ParseStatus::Enum RequestParser::consume(const char* buffer, size_t length) {
-    _buffer.append(buffer, length);
 
-    if (!_headerParsed) {
-        size_t headerEnd = _buffer.find("\r\n\r\n");
-        if (headerEnd != std::string::npos) {
-            _headerParsed = true;
-            _bodyStart = headerEnd + 4;
-            std::string headers = _buffer.substr(0, headerEnd);
-            // std::cout << "DEBUG: Headers parsed. Body start at " << _bodyStart << std::endl;
-            
-            size_t pos = headers.find("Content-Length:");
-            if (pos != std::string::npos) {
-                _contentLength = std::strtoul(headers.c_str() + pos + 15, NULL, 10);
-            } else {
-                _contentLength = 0;
-            }
 
-            if (headers.find("Transfer-Encoding: chunked") != std::string::npos) {
-                _isChunked = true;
-            }
-            
-             if (!_isChunked && _contentLength > _maxBodySize) {
-                return ParseStatus::Error_TooLarge;
-            }
-        }
+Http::Http() : _rawRequestPtr(NULL), _bodyStart(0), _bodyLen(0), _state(STATE_REQUEST_LINE), _contentLength(0), _isChunked(false), _chunkSize(0), _bodyBytesReceived(0) {}
+
+Http::Http(const Http& other) {
+    *this = other;
+}
+
+Http& Http::operator=(const Http& other) {
+    if (this != &other) {
+        _serverData = other._serverData;
+        _rawRequestPtr = other._rawRequestPtr;
+        _bodyStart = other._bodyStart;
+        _bodyLen = other._bodyLen;
+        _httpError = other._httpError;
+        _state = other._state;
+        _parsingBuffer = other._parsingBuffer;
+        _contentLength = other._contentLength;
+        _isChunked = other._isChunked;
+        _chunkSize = other._chunkSize;
+        _bodyBytesReceived = other._bodyBytesReceived;
+        _bodyBuffer = other._bodyBuffer;
+        _s_requestData = other._s_requestData;
+        _myConfig = other._myConfig;
+        _s_responseData = other._s_responseData;
     }
+    return *this;
+}
 
-    if (_headerParsed) {
-        if (_isChunked) {
-            if (_buffer.size() > _bodyStart + 1000000) {
-                 static size_t lastReportedSizeChunked = 0;
-                 if (_buffer.size() > lastReportedSizeChunked + 1000000) {
-                     std::cout << "DEBUG: Received chunked data, buffer size: " << _buffer.size() << " bytes" << std::endl;
-                     lastReportedSizeChunked = _buffer.size();
-                 }
-            }
+Http::~Http() {}
 
-            size_t searchStart = _bodyStart;
-            if (_buffer.size() > length + 20) {
-                size_t calculatedStart = _buffer.size() - length - 20;
-                if (calculatedStart > _bodyStart) searchStart = calculatedStart;
-            }
+void Http::setServerConfig(const ServerConfig& serverData) {
+    _serverData = serverData;
+}
 
-            if (_buffer.find("0\r\n\r\n", searchStart) != std::string::npos) {
-                return ParseStatus::Done;
-            }
-            
-            // Allow overhead for chunked encoding (e.g. 50% more to be safe, or just a fixed buffer)
-            // The strict check is done in Http::isBodySizeAllowed after decoding
-            size_t limit = _maxBodySize + (50 * 1024 * 1024); 
-            if (_buffer.size() - _bodyStart > limit) {
-                std::cout << "DEBUG: Chunked body too large. Size: " << (_buffer.size() - _bodyStart) << ", Limit: " << limit << std::endl;
-                return ParseStatus::Error_TooLarge;
-            }
-        } else {
-            // Debugging for large body
-            if (_contentLength > 1000000) {
-                 static size_t lastReportedSize = 0;
-                 if (_buffer.size() > lastReportedSize + 1000000) {
-                     std::cout << "DEBUG: Received " << _buffer.size() << " / " << (_bodyStart + _contentLength) << " bytes" << std::endl;
-                     lastReportedSize = _buffer.size();
-                 }
-            }
+void Http::reset() {
+    _state = STATE_REQUEST_LINE;
+    _contentLength = 0;
+    _isChunked = false;
+    _chunkSize = 0;
+    _bodyBytesReceived = 0;
+    _bodyBuffer.clear();
+    _s_requestData = requestData();
+    _s_responseData = responseData();
+}
 
-            if (_buffer.size() >= _bodyStart + _contentLength) {
-                return ParseStatus::Done;
-            }
-        }
+void Http::processRequestURI() {
+    size_t queryPos = _s_requestData._request.find('?');
+    if (queryPos != std::string::npos) {
+        _s_requestData._queryString = _s_requestData._request.substr(queryPos + 1);
+        _s_requestData._fileName = _s_requestData._request.substr(0, queryPos);
+    } else {
+        _s_requestData._fileName = _s_requestData._request;
     }
     
-    if (!_headerParsed && _buffer.size() > 16384) {
-        std::cout << "DEBUG: Header too large. Size: " << _buffer.size() << std::endl;
-        return ParseStatus::Error_InvalidFormat;
+    while (!_s_requestData._fileName.empty() && _s_requestData._fileName[0] == '/')
+        _s_requestData._fileName = _s_requestData._fileName.substr(1);
+}
+
+void Http::handleRequestCompletion() {
+    if (!_s_responseData._response.empty()) return;
+
+    // Config was already populated in processHeadersEnd for body size checks
+    // If not set (e.g., no body), populate now
+    if (_myConfig.root.empty()) {
+        _myConfig = getMyConfig();
+        _httpError = HttpError(_myConfig.error_pages);
     }
 
-    return ParseStatus::Continue;
+    processRequestURI();
+
+    std::cout << YELLOW << "DEBUG REQUEST: " << _s_requestData._method << " " << _s_requestData._uri << RESET << std::endl;
+    std::cout << YELLOW << "DEBUG FILENAME: " << _s_requestData._fileName << RESET << std::endl;
+    std::cout << YELLOW << "DEBUG META: CLEN=" << _contentLength
+              << " TE=" << (_isChunked ? "chunked" : "none")
+              << " HDR_CLEN='" << (_s_requestData._headers.count("Content-Length") ? _s_requestData._headers.at("Content-Length") : "") << "'"
+              << RESET << std::endl;
+
+    if (_s_responseData._hasError) {
+        int code = _s_responseData._responseStatusCode ? _s_responseData._responseStatusCode : 500;
+        _s_responseData._response = _httpError.generateErrorResponse(code);
+        std::cout << RED << "DEBUG: SENDING ERROR RESPONSE " << code << RESET << std::endl;
+        return;
+    }
+    responseBuilder();
+
+    std::cout << YELLOW << "DEBUG RESPONSE STATUS: " << _s_responseData._responseStatusCode << RESET << std::endl;
 }
 
-bool RequestParser::hasRequest() const {
-    if (!_headerParsed) return false;
-    if (_isChunked) return _buffer.find("0\r\n\r\n", _bodyStart) != std::string::npos;
-    return _buffer.size() >= _bodyStart + _contentLength;
+void Http::findLocationConfig(LocationConfig& myConfig, bool& baseFound, std::string& baseKey, LocationConfig& baseLoc, bool& regexFound, LocationConfig& regexLoc) {
+    (void)myConfig;
+    for (std::map<std::string, LocationConfig>::iterator it = _serverData.locations.begin();
+         it != _serverData.locations.end(); ++it) {
+        const LocationConfig &loc = it->second;
+
+        if (loc.is_regex) {
+            if (!loc.regex_pattern.empty() && regexMatch(loc.regex_pattern, _s_requestData._uri)) {
+                if (!regexFound) { regexFound = true; regexLoc = loc; }
+            }
+            continue;
+        }
+
+        if (_s_requestData._uri.find(it->first) == 0) {
+            if (!baseFound || it->first.length() > baseKey.length()) {
+                baseFound = true;
+                baseKey = it->first;
+                baseLoc = loc;
+            }
+        }
+    }
 }
 
-std::string RequestParser::extractRequest() {
-    if (!hasRequest()) return "";
-    std::string req;
-    if (_isChunked) {
-        size_t end = _buffer.find("0\r\n\r\n", _bodyStart);
-        req = _buffer.substr(0, end + 5);
-        _buffer.erase(0, end + 5);
+void Http::finalizeLocationConfig(LocationConfig& myConfig, bool baseFound, const std::string& baseKey, const LocationConfig& baseLoc, bool regexFound, const LocationConfig& regexLoc) {
+    if (!baseFound) {
+        myConfig.root = _serverData.root;
+        myConfig.allow_methods = _serverData.allow_methods;
+        myConfig.index = _serverData.index;
+        myConfig.client_max_body_size = _serverData.client_max_body_size;
+        myConfig.autoindex = _serverData.autoindex;
+        myConfig.has_redirect = _serverData.has_redirect;
+        myConfig.redirect_url = _serverData.redirect_url;
+        myConfig.redirect_code = _serverData.redirect_code;
+        myConfig.upload_dir = _serverData.upload_dir;
+        myConfig.interpreters = _serverData.interpreters;
+        myConfig.scripts_path = _serverData.scripts_path;
+        myConfig.error_pages = _serverData.error_pages;
+        _s_requestData._request = _s_requestData._uri;
     } else {
-        req = _buffer.substr(0, _bodyStart + _contentLength);
-        _buffer.erase(0, _bodyStart + _contentLength);
+        myConfig = Config::getMergedLocationConfig(_serverData, baseLoc);
+        if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri[baseKey.length()] == '/')
+            _s_requestData._request = _s_requestData._uri.substr(baseKey.length());
+        else if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri.length() != baseKey.length())
+            _s_requestData._request = _s_requestData._uri;
+        else if (_s_requestData._uri == baseKey)
+             _s_requestData._request = "";
+        else
+            _s_requestData._request = _s_requestData._uri.substr(baseKey.length());
     }
-    _headerParsed = false;
-    _contentLength = 0;
-    _isChunked = false;
-    _bodyStart = 0;
-    consume("", 0);
-    return req;
+
+    if (regexFound) {
+        LocationConfig mergedRegex = Config::getMergedLocationConfig(_serverData, regexLoc);
+        if (!mergedRegex.root.empty()) myConfig.root = mergedRegex.root;
+        if (!mergedRegex.index.empty()) myConfig.index = mergedRegex.index;
+        if (!mergedRegex.client_max_body_size.empty()) myConfig.client_max_body_size = mergedRegex.client_max_body_size;
+        if (!mergedRegex.upload_dir.empty()) myConfig.upload_dir = mergedRegex.upload_dir;
+        if (!mergedRegex.allow_methods.empty()) myConfig.allow_methods = mergedRegex.allow_methods;
+        if (!mergedRegex.error_pages.empty()) myConfig.error_pages = mergedRegex.error_pages;
+        if (!mergedRegex.interpreters.empty()) myConfig.interpreters = mergedRegex.interpreters;
+        myConfig.autoindex = mergedRegex.autoindex;
+    }
 }
 
-void RequestParser::reset() {
-    _buffer.clear();
-    _headerParsed = false;
-    _contentLength = 0;
-    _isChunked = false;
-    _bodyStart = 0;
+bool Http::handleFavicon() {
+    if (_s_requestData._uri == "/favicon.ico") {
+        _s_responseData._response = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+        return true;
+    }
+    return false;
+}
+
+bool Http::checkBodySize() {
+    const size_t bodySize = getCurrentBodySize();
+
+    std::cout << YELLOW << "DEBUG BODY SIZE: " << bodySize
+              << " / LIMIT: " << (_myConfig.client_max_body_size.empty() ? "(none)" : _myConfig.client_max_body_size)
+              << " CLEN=" << _contentLength
+              << " CHUNKED=" << (_isChunked ? "yes" : "no")
+              << RESET << std::endl;
+
+    if (!isBodySizeAllowed()) {
+        std::cout << RED << "DEBUG: BODY TOO LARGE (" << bodySize << ") > LIMIT (" 
+                  << (_myConfig.client_max_body_size.empty() ? "none" : _myConfig.client_max_body_size)
+                  << ")" << RESET << std::endl;
+        _s_responseData._hasError = true;
+        _s_responseData._responseStatusCode = 413;
+        _s_responseData._response = _httpError.generateErrorResponse(413);
+        return true;
+    }
+    return false;
+}
+
+bool Http::checkMethodAllowed() {
+   if (!isMethodAllowed()) {
+        _s_responseData._hasError = true;
+        _s_responseData._responseStatusCode = 405;
+        _s_responseData._response = _httpError.generateErrorResponse(405);
+        return true;
+    }
+    return false;
+}
+
+void Http::dispatchMethod() {
+    if (_s_requestData._method == "GET") {
+        getResponseBuilder();
+    } else if (_s_requestData._method == "POST") {
+        postResponseBuilder();
+    } else if (_s_requestData._method == "DELETE") {
+        deleteResponseBuilder();
+    } else if (_s_requestData._method == "PUT") {
+        putResponseBuilder();
+    } else {
+        _s_responseData._hasError = true;
+        _s_responseData._responseStatusCode = 501;
+        _s_responseData._response = _httpError.generateErrorResponse(501);
+    }
+}
+
+std::string Http::getHeader(const std::string& key) {
+    std::map<std::string, std::string>::iterator it = _s_requestData._headers.find(key);
+    if (it != _s_requestData._headers.end()) return it->second;
+    return "";
+}
+
+void Http::handleSimplePost() {
+    std::ostringstream html;
+    html << "<html><body><h1>POST Data Received</h1>"
+         << "<p>Content-Length: " << _bodyBuffer.size() << " bytes</p>"
+         << "<pre>" << _bodyBuffer << "</pre></body></html>";
+    
+    std::string respBody = html.str();
+    std::ostringstream response;
+    response << "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+             << "Content-Length: " << respBody.size() << "\r\n"
+             << "Connection: keep-alive\r\n\r\n" << respBody;
+
+    _s_responseData._response = response.str();
+    _s_responseData._responseStatusCode = 200;
+}
+
+void Http::handleMultipartPost() {
+    std::string contentType = getHeader("Content-Type");
+    std::string boundary;
+    if (contentType.find("multipart/form-data") == std::string::npos || !extractBoundary(contentType, boundary)) {
+        sendError(400);
+        return;
+    }
+
+    MultipartFile mf;
+    if (!parseMultipartFilePart(_bodyBuffer, boundary, mf, "file")) {
+        if (!parseMultipartFilePart(_bodyBuffer, boundary, mf, "")) {
+            sendError(400);
+            return;
+        }
+    }
+    saveUploadedFile(mf);
+}
+
+std::string Http::resolveUniquePath(const std::string& filename) {
+    std::string fullPath = _myConfig.upload_dir + filename;
+    int probe = open(fullPath.c_str(), O_RDONLY);
+    if (probe != -1) {
+        close(probe);
+        std::ostringstream oss;
+        oss << _myConfig.upload_dir << "/" << std::time(NULL) << "_" << filename;
+        return oss.str();
+    }
+    return fullPath;
+}
+
+bool Http::writeFile(const std::string& path, const std::string& data) {
+    int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) return false;
+
+    ssize_t written = write(fd, data.data(), data.size());
+    close(fd);
+
+    if (written == -1 || static_cast<size_t>(written) != data.size()) {
+        std::remove(path.c_str());
+        return false;
+    }
+    return true;
+}
+
+void Http::sendUploadSuccess(const MultipartFile& mf) {
+    std::ostringstream html;
+    html << "<html><body><h1>File Uploaded</h1>"
+         << "<p>Saved as: " << mf.filename << "</p>"
+         << "<p>Bytes: " << mf.data.size() << "</p></body></html>";
+    
+    std::string respBody = html.str();
+    std::ostringstream response;
+    response << "HTTP/1.1 201 Created\r\nContent-Type: text/html\r\n"
+             << "Content-Length: " << respBody.size() << "\r\n"
+             << "Connection: keep-alive\r\n\r\n" << respBody;
+
+    _s_responseData._response = response.str();
+    _s_responseData._responseStatusCode = 201;
+}
+
+void Http::saveUploadedFile(MultipartFile& mf) {
+    std::string fullPath = resolveUniquePath(mf.filename);
+    if (!writeFile(fullPath, mf.data)) {
+        sendError(500);
+        return;
+    }
+    sendUploadSuccess(mf);
 }

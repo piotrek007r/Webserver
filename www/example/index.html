@@ -4,93 +4,100 @@
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
 	<title>Demo: /example (GET • POST • DELETE)</title>
-		<style>
-			body { font-family: sans-serif; margin: 16px; }
-			header { margin-bottom: 12px; }
-			.card { border: 1px solid #ddd; padding: 12px; margin: 12px 0; }
-			.row { display: flex; gap: 8px; flex-wrap: wrap; }
-			input[type="text"], input[type="file"] { flex: 1; padding: 6px; }
-			.btn { padding: 6px 10px; }
-			.btn.danger { background: #fdd; border: 1px solid #f88; }
-			.response { margin-top: 8px; padding: 8px; background: #f7f7f7; white-space: pre-wrap; }
-			.response.ok { background: #eaffea; }
-			.response.err { background: #ffecec; }
-		</style>
+	<style>
+		body { font-family: sans-serif; margin: 16px; }
+		header { margin-bottom: 12px; }
+		.card { border: 1px solid #ddd; padding: 12px; margin: 12px 0; }
+		.row { display: flex; gap: 8px; flex-wrap: wrap; }
+		input[type="text"], input[type="file"] { flex: 1; padding: 6px; }
+		.btn { padding: 6px 10px; }
+		.btn.danger { background: #fdd; border: 1px solid #f88; }
+		.response { margin-top: 8px; padding: 8px; background: #f7f7f7; white-space: pre-wrap; }
+		.response.ok { background: #eaffea; }
+		.response.err { background: #ffecec; }
+	</style>
 </head>
 <body>
-			<header>
-				<h1>/example — minimal demo</h1>
-				<div class="muted">GET • POST (upload) • DELETE</div>
-			</header>
-	<main>
+	<header>
+		<h1>/example — minimal demo</h1>
+		<div class="muted">GET • POST (upload) • DELETE</div>
+	</header>
 
+	<main>
 		<!-- GET -->
-				<section class="card" id="get-card">
-					<h2>GET</h2>
-					<div class="row">
-						<input id="get-url" type="text" value="/example/data.txt" placeholder="/example/data.txt" />
-						<button class="btn" id="btn-get">GET</button>
-					</div>
-					<div id="get-resp" class="response" hidden></div>
-				</section>
+		<section class="card" id="get-card">
+			<h2>GET</h2>
+			<div class="row">
+				<input id="get-url" type="text" value="/example/data.txt" placeholder="/example/data.txt" />
+				<button class="btn" id="btn-get">GET</button>
+			</div>
+			<div id="get-resp" class="response" hidden></div>
+		</section>
 
 		<!-- POST (upload) -->
-				<section class="card" id="post-card">
-					<h2>POST</h2>
-					<input id="file" type="file" />
-					<div class="row" style="margin-top:8px">
-						<button class="btn" id="btn-post">Upload</button>
-						<button class="btn secondary" id="btn-post-text">Send text</button>
-					</div>
-					<div id="post-resp" class="response" hidden></div>
-				</section>
+		<section class="card" id="post-card">
+			<h2>POST</h2>
+			<input id="file" type="file" />
+			<div class="row" style="margin-top:8px">
+				<button class="btn" id="btn-post">Upload</button>
+				<button class="btn secondary" id="btn-post-text">Send text</button>
+			</div>
+			<div id="post-resp" class="response" hidden></div>
+		</section>
+
+		<!-- POST to CGI -->
+		<section class="card" id="post-cgi-card">
+			<h2>POST to CGI</h2>
+			<div class="row">
+				<input id="cgi-path" type="text" value="/test/get_date.py" placeholder="/test/get_date.py" />
+			</div>
+			<div class="row" style="margin-top:8px">
+				<input id="cgi-file" type="file" />
+				<button class="btn" id="btn-post-cgi">POST to CGI</button>
+			</div>
+			<div id="post-cgi-resp" class="response" hidden></div>
+		</section>
 
 		<!-- DELETE -->
-				<section class="card" id="delete-card">
-					<h2>DELETE</h2>
-					<div class="row">
-						<input id="del-url" type="text" value="/example/uploads/testfile.txt" placeholder="/example/uploads/name.txt" />
-						<button class="btn danger" id="btn-del">DELETE</button>
-					</div>
-					<div id="del-resp" class="response" hidden></div>
-				</section>
-
+		<section class="card" id="delete-card">
+			<h2>DELETE</h2>
+			<div class="row">
+				<input id="del-url" type="text" value="/example/uploads/testfile.txt" placeholder="/example/uploads/name.txt" />
+				<button class="btn danger" id="btn-del">DELETE</button>
+			</div>
+			<div id="del-resp" class="response" hidden></div>
+		</section>
 	</main>
 
 	<script>
-			function showResp(el, ok, text) {
+		function showResp(el, ok, text) {
 			el.hidden = false;
 			el.className = 'response ' + (ok ? 'ok' : 'err');
 			el.innerHTML = '';
-			
 			el.appendChild(document.createTextNode(text));
-
 			const br = document.createElement('br');
 			const btn = document.createElement('button');
 			btn.type = 'button';
 			btn.textContent = 'Hide';
 			btn.className = 'btn secondary';
-			btn.addEventListener('click', () => {
-				el.hidden = true; 
-			});
+			btn.addEventListener('click', () => { el.hidden = true; });
 			el.appendChild(br);
 			el.appendChild(btn);
-    
-}
+		}
 
 		// GET
 		document.getElementById('btn-get').addEventListener('click', async () => {
 			const url = (document.getElementById('get-url').value || '').trim();
 			const respBox = document.getElementById('get-resp');
-					if (!url.startsWith('/example')) {
-						return showResp(respBox, false, 'Path must start with /example');
+			if (!url.startsWith('/example')) {
+				return showResp(respBox, false, 'Path must start with /example');
 			}
 			try {
 				const res = await fetch(url, { method: 'GET' });
 				const body = await res.text();
 				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
 			} catch (e) {
-						showResp(respBox, false, `Error: ${e.message}`);
+				showResp(respBox, false, `Error: ${e.message}`);
 			}
 		});
 
@@ -98,18 +105,17 @@
 		document.getElementById('btn-post').addEventListener('click', async () => {
 			const fileInput = document.getElementById('file');
 			const respBox = document.getElementById('post-resp');
-					if (!fileInput.files || !fileInput.files.length) {
-						return showResp(respBox, false, 'Pick a file to upload.');
+			if (!fileInput.files || !fileInput.files.length) {
+				return showResp(respBox, false, 'Pick a file to upload.');
 			}
 			const form = new FormData();
-			// Nazwa pola: 'file' — typowe dla uploadów; serwer powinien przyjąć multipart/form-data.
 			form.append('file', fileInput.files[0]);
 			try {
 				const res = await fetch('/example', { method: 'POST', body: form });
 				const body = await res.text();
 				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
 			} catch (e) {
-						showResp(respBox, false, `Error: ${e.message}`);
+				showResp(respBox, false, `Error: ${e.message}`);
 			}
 		});
 
@@ -123,7 +129,33 @@
 				const body = await res.text();
 				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
 			} catch (e) {
-						showResp(respBox, false, `Error: ${e.message}`);
+				showResp(respBox, false, `Error: ${e.message}`);
+			}
+		});
+
+		// POST to CGI — body z przeglądarki: plik lub (opcjonalnie) URL
+		document.getElementById('btn-post-cgi').addEventListener('click', async () => {
+			let path = (document.getElementById('cgi-path').value || '').trim();
+			const fileInput = document.getElementById('cgi-file');
+			const respBox = document.getElementById('post-cgi-resp');
+			if (!path.startsWith('/')) path = '/' + path;
+			try {
+				let bodyContent = '';
+				if (fileInput.files && fileInput.files.length) {
+					bodyContent = await fileInput.files[0].text();
+				} else {
+					throw new Error('Provide file or URL');
+				}
+
+				const res = await fetch(path, {
+					method: 'POST',
+					headers: { 'Content-Type': 'text/plain' },
+					body: bodyContent
+				});
+				const body = await res.text();
+				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
+			} catch (e) {
+				showResp(respBox, false, `Error: ${e.message}`);
 			}
 		});
 
@@ -131,16 +163,16 @@
 		document.getElementById('btn-del').addEventListener('click', async () => {
 			const url = (document.getElementById('del-url').value || '').trim();
 			const respBox = document.getElementById('del-resp');
-					if (!url.startsWith('/example')) {
-						return showResp(respBox, false, 'Use a path under /example ...');
+			if (!url.startsWith('/example')) {
+				return showResp(respBox, false, 'Use a path under /example ...');
 			}
-					if (!confirm(`Delete file: ${url}?`)) return;
+			if (!confirm(`Delete file: ${url}?`)) return;
 			try {
 				const res = await fetch(url, { method: 'DELETE' });
 				const body = await res.text();
 				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
 			} catch (e) {
-						showResp(respBox, false, `Error: ${e.message}`);
+				showResp(respBox, false, `Error: ${e.message}`);
 			}
 		});
 	</script>

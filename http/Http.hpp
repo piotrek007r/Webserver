@@ -43,29 +43,13 @@ struct ParseStatus {
     enum Enum {
         Continue,
         Done,
+        HeadersDone,
         Error_TooLarge,
         Error_InvalidFormat
     };
 };
 
-class RequestParser {
-    private:
-        std::string _buffer;
-        size_t _maxBodySize;
-        bool _headerParsed;
-        size_t _contentLength;
-        bool _isChunked;
-        size_t _bodyStart;
-        size_t _chunkedPos; // Tracks position in chunked body
 
-    public:
-        RequestParser();
-        void setMaxBodySize(size_t size);
-        ParseStatus::Enum consume(const char* buffer, size_t length);
-        bool hasRequest() const;
-        std::string extractRequest();
-        void reset();
-};
 
 
 class Http {
@@ -77,6 +61,43 @@ class Http {
         size_t _bodyLen;
         HttpError _httpError;
         
+        // Parsing state
+        enum InternalState {
+            STATE_REQUEST_LINE,
+            STATE_HEADERS,
+            STATE_BODY,
+            STATE_CHUNK_SIZE,
+            STATE_CHUNK_DATA,
+            STATE_CHUNK_TRAILER,
+            STATE_COMPLETE
+        };
+        InternalState _state;
+        std::string _parsingBuffer;
+        size_t _contentLength;
+        bool _isChunked;
+        size_t _chunkSize;
+        size_t _bodyBytesReceived;
+
+        std::string _bodyBuffer;
+        std::string _rawBuffer;
+        std::string _tempFilePath;
+        size_t _cleanBodySize;
+        bool _usingTempFile;
+        int _tempFileFd;
+        
+
+        
+        void handleBodyData(const std::string& data);
+        void createTempFile();
+        void writeToTempFile(const std::string& data);
+
+        // Helper functions for parsing
+        void parseRequestLine();
+        void parseHeaders();
+        void processHeadersEnd();
+        void parseBody();
+        void parseChunkedBody();
+
         struct requestData {
             long long _contentLength;
             std::string _Root;
@@ -136,10 +157,11 @@ class Http {
         } _s_responseData;
 
         // Parses a raw HTTP request.
-        void parseRequest(std::string &rawRequest);
-        void parseHeader();
+        // void parseRequest(std::string &rawRequest); // Removed
+        // void parseHeader(); // Removed
         bool isMethodAllowed();
         bool isBodySizeAllowed();
+        size_t getCurrentBodySize() const;
 
         // Response functions
         void responseBuilder();
@@ -159,20 +181,50 @@ class Http {
         void deleteFile(const std::string& filePath);
         void deleteDirectory(const std::string& dirPath);
         std::string getCGIinterpreter(const std::string& fileName);
-        void chankuj(std::string& rawRequest);
-
-
+        // void chankuj(std::string& rawRequest); // Removed
 
         void cgiResponseBuilder();
         void getResponseBuilder();
         void postResponseBuilder();
         void deleteResponseBuilder();
         void putResponseBuilder();
+
+        // Refactoring helpers
+        void handleRequestCompletion();
+        void processRequestURI();
+        void setupCgiEnv(std::map<std::string, std::string>& envVars, const std::string& scriptPath, const std::string& body);
+        void handlePutPostUpload(const std::string& reqBody, bool isPost);
+        void serveFileOrIndex(const std::string& fullPath);
+        void tryIndexFiles();
+        void findLocationConfig(LocationConfig& myConfig, bool& baseFound, std::string& baseKey, LocationConfig& baseLoc, bool& regexFound, LocationConfig& regexLoc);
+        void finalizeLocationConfig(LocationConfig& myConfig, bool baseFound, const std::string& baseKey, const LocationConfig& baseLoc, bool regexFound, const LocationConfig& regexLoc);
         
+        bool handleFavicon();
+        bool checkBodySize();
+        bool checkMethodAllowed();
+        void dispatchMethod();
+        
+        void handleSimplePost();
+        void handleMultipartPost();
+        void saveUploadedFile(MultipartFile& mf);
+        std::string resolveUniquePath(const std::string& filename);
+        bool writeFile(const std::string& path, const std::string& data);
+        void sendUploadSuccess(const MultipartFile& mf);
+        std::string getHeader(const std::string& key);
+
     public:
+        Http();
+        Http(const Http& other);
+        Http& operator=(const Http& other);
 
         // Constructor for creating HTTP responses
         Http (std::string &rawRequest, ServerConfig serverData);
+        Http (ServerConfig serverData); // New constructor
+        ~Http();
+
+        void setServerConfig(const ServerConfig& serverData);
+        ParseStatus::Enum consume(const char* buffer, size_t length);
+        void reset();
 
         // Generates the HTTP response string
         bool getIsError() const;

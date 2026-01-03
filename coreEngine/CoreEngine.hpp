@@ -30,10 +30,10 @@ class CoreEngine
 private:
     struct client
         {
+            Http http;
             sockaddr_storage clientSockaddr;
             ServerConfig serverCfg;
             std::string sendBuffer;
-            RequestParser parser;
             char inputBuffer[65536];
             size_t sendOffset;
             bool hasError;

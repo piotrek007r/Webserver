@@ -9,8 +9,8 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/webserv",
-            // "args": ["./conf/default42.conf"],
-            "args": [],
+            "args": ["./conf/default42.conf"],
+            // "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
@@ -26,9 +26,9 @@
                     "description": "Set Disassembly Flavor to Intel",
                     "text": "-gdb-set disassembly-flavor intel",
                     "ignoreFailures": true
-                },
-                { "text": "set follow-fork-mode child", "description": "Follow child after fork" },
-                { "text": "set detach-on-fork off", "description": "Keep both processes (opcjonalnie)" }
+                }//,
+                // { "text": "set follow-fork-mode child", "description": "Follow child after fork" },
+                // { "text": "set detach-on-fork off", "description": "Keep both processes (opcjonalnie)" }
             ]
         }
 

@@ -48,7 +48,9 @@
 		<h2>POST to CGI</h2>
 		<div class="row">
 			<input id="cgi-path" type="text" value="/test/get_date.py" placeholder="/test/get_date.py" />
-			<input id="cgi-data" type="text" value="test_param=hello&name=world" placeholder="query params or raw data" />
+		</div>
+		<div class="row" style="margin-top:8px">
+			<input id="cgi-file" type="file" />
 			<button class="btn" id="btn-post-cgi">POST to CGI</button>
 		</div>
 		<div id="post-cgi-resp" class="response" hidden></div>
@@ -137,22 +139,29 @@
 			}
 		});
 
-		// POST to CGI – wysyłamy zwykły POST bez multipart
+		// POST to CGI — treść z przeglądarki: lokalny plik lub (opcjonalnie) URL
 		document.getElementById('btn-post-cgi').addEventListener('click', async () => {
-			const data = (document.getElementById('cgi-data').value || '').trim();
 			let path = (document.getElementById('cgi-path').value || '').trim();
+			const fileInput = document.getElementById('cgi-file');
 			const respBox = document.getElementById('post-cgi-resp');
 			if (!path.startsWith('/')) path = '/' + path;
 			try {
-				const res = await fetch(path, { 
-					method: 'POST', 
-					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-					body: data || 'timestamp=' + Date.now()
+				let bodyContent = '';
+				if (fileInput.files && fileInput.files.length) {
+					bodyContent = await fileInput.files[0].text();
+				} else {
+					throw new Error('Provide file or URL');
+				}
+
+				const res = await fetch(path, {
+					method: 'POST',
+					headers: { 'Content-Type': 'text/plain' },
+					body: bodyContent
 				});
 				const body = await res.text();
 				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
 			} catch (e) {
-						showResp(respBox, false, `Error: ${e.message}`);
+				showResp(respBox, false, `Error: ${e.message}`);
 			}
 		});
 
