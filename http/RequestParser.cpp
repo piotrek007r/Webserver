@@ -2,7 +2,13 @@
 #include "Http.hpp"
 
 RequestParser::RequestParser() 
-    : _maxBodySize(100*1024*1024), _headerParsed(false), _contentLength(0), _isChunked(false), _bodyStart(0) {}
+        : _buffer(),
+            _maxBodySize(100 * 1024 * 1024),
+            _contentLength(0),
+            _headerParsed(false),
+            _isChunked(false),
+            _bodyStart(0),
+            _chunkedPos(0) {}
 
 void RequestParser::setMaxBodySize(size_t size) { _maxBodySize = size; }
 
