@@ -42,6 +42,7 @@ static void applyLocationOverride(LocationConfig &base, const LocationConfig &ov
 // Constructor
 Http::Http (std::string &rawRequest, ServerConfig serverData){
     initMembers(rawRequest, serverData);
+    std::cout << GREEN << rawRequest << RESET << std::endl;
     requestBilder(rawRequest);
 
     _myConfig = getMyConfig();

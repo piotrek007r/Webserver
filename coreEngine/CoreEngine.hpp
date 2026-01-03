@@ -37,10 +37,20 @@ private:
             RequestParser parser;
             char inputBuffer[65536];
             size_t sendOffset;
-            bool hasError;
-            bool closeAfterSend;
-            int byteRecived;
+            std::string _body;
+            std::string _headers;
             int FD;
+            
+            int byteRecived;
+            size_t _maxBodySize;
+            size_t _contentLength;
+
+            bool closeAfterSend;
+            bool hasError;
+            bool _headerParsed;
+            bool _isChunked;
+            size_t _bodyStart;
+            size_t _chunkedPos; // Tracks position in chunked body
             timeval lastAction;
         }; 
         client &getClientByFD(int socketFD);

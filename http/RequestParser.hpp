@@ -18,8 +18,8 @@ class RequestParser {
     private:
         std::string _buffer;
         size_t _maxBodySize;
-        bool _headerParsed;
         size_t _contentLength;
+        bool _headerParsed;
         bool _isChunked;
         size_t _bodyStart;
         size_t _chunkedPos; // Tracks position in chunked body

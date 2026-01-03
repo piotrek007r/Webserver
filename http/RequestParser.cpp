@@ -12,6 +12,7 @@ ParseStatus::Enum RequestParser::consume(const char* incommingData, size_t lengt
     std::cout << std::endl << YELLOW << "DEBUG Buffer: " << length << " bytes" << std::endl << std::string(incommingData, length) << RESET << std::endl;
 
     if (!_headerParsed) {
+        std::cout << "DEBUG: Parsing headers" << std::endl;
         ParseStatus::Enum status = parseHeaders();
         if (status != ParseStatus::Continue) return status;
     }
