@@ -843,14 +843,14 @@ void Http::responseBuilder() {
         return;
     }
 
-    if (isCGI()) {
-        cgiResponseBuilder();
-        return;
-    }
-   if (!isMethodAllowed()) {
+    if (!isMethodAllowed()) {
         _s_responseData._hasError = true;
         _s_responseData._responseStatusCode = 405;
         _s_responseData._response = _httpError.generateErrorResponse(405);
+        return;
+    }
+    if (isCGI()) {
+        cgiResponseBuilder();
         return;
     }
     
