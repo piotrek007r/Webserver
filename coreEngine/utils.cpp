@@ -36,7 +36,7 @@ std::string CoreEngine::prepareResponse(client &client, size_t el, std::string r
     {
         std::string::size_type eol = rawRequest.find("\r\n");
         std::string firstLine = (eol == std::string::npos) ? rawRequest : rawRequest.substr(0, eol);
-        std::cout << YELLOW << "--> Request: " << firstLine << " (" << rawRequest.size() << " bytes)" << RESET << std::endl;
+        // std::cout << YELLOW << "--> Request: " << firstLine << " (" << rawRequest.size() << " bytes)" << RESET << std::endl;
     }
     Http object(rawRequest, client.serverCfg);
     if (object.getIsError())

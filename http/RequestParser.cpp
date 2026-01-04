@@ -15,10 +15,10 @@ void RequestParser::setMaxBodySize(size_t size) { _maxBodySize = size; }
 ParseStatus::Enum RequestParser::consume(const char* incommingData, size_t length) {
     _buffer.append(incommingData, length);
 
-    std::cout << std::endl << YELLOW << "DEBUG Buffer: " << length << " bytes" << std::endl << std::string(incommingData, length) << RESET << std::endl;
+    // std::cout << std::endl << YELLOW << "DEBUG Buffer: " << length << " bytes" << std::endl << std::string(incommingData, length) << RESET << std::endl;
 
     if (!_headerParsed) {
-        std::cout << "DEBUG: Parsing headers" << std::endl;
+        // std::cout << "DEBUG: Parsing headers" << std::endl;
         ParseStatus::Enum status = parseHeaders();
         if (status != ParseStatus::Continue) return status;
     }

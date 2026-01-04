@@ -114,7 +114,7 @@ void CoreEngine::sendToClient(size_t el)
       std::string firstLine = (eol == std::string::npos) ? client.sendBuffer : client.sendBuffer.substr(0, eol);
       // std::cout << "actual client: " << client.FD
       //           << " | sending: " << client.sendBuffer.size() << " bytes"
-      //           << " | " << firstLine << std::endl;
+      //           << " | " << client.sendBuffer << std::endl;
    }
    try
    {

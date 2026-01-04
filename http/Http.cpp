@@ -32,7 +32,9 @@ static void applyLocationOverride(LocationConfig &base, const LocationConfig &ov
     if (!over.upload_dir.empty()) base.upload_dir = over.upload_dir;
     if (!over.scripts_path.empty()) base.scripts_path = over.scripts_path;
     if (!over.root.empty()) base.root = over.root;
-    if (!over.allow_methods.empty()) base.allow_methods = over.allow_methods;
+    if (!over.allow_methods.empty()) {
+        for (unsigned int i = 0; i < over.allow_methods.size(); ++i)
+                    base.allow_methods.push_back(over.allow_methods[i]);}
     for (std::map<std::string, std::string>::const_iterator it = over.interpreters.begin(); it != over.interpreters.end(); ++it)
         base.interpreters[it->first] = it->second;
     if (!over.error_pages.empty()) base.error_pages = over.error_pages;
@@ -42,7 +44,7 @@ static void applyLocationOverride(LocationConfig &base, const LocationConfig &ov
 // Constructor
 Http::Http (std::string &rawRequest, ServerConfig serverData){
     initMembers(rawRequest, serverData);
-    std::cout << GREEN << rawRequest << RESET << std::endl;
+    // std::cout << GREEN << rawRequest << RESET << std::endl;
     requestBilder(rawRequest);
 
     _myConfig = getMyConfig();
@@ -897,7 +899,9 @@ LocationConfig Http::getMyConfig() {
 
         if (loc.is_regex) {
             if (!loc.regex_pattern.empty() && regexMatch(loc.regex_pattern, _s_requestData._uri)) {
-                if (!regexFound) { regexFound = true; regexLoc = loc; }
+                if (!regexFound) { 
+                    regexFound = true; 
+                    regexLoc = loc;}
             }
             continue;
         }
