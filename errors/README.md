@@ -118,32 +118,32 @@ std::string description = errorHandler.getErrorDescription(403);
 ### Walidacja pustego żądania HTTP (400)
 
 ```cpp
-void recivNClose(size_t el) {
-    char buffer[8192];
-    memset(buffer, 0, sizeof(buffer));
+// void recivNClose(size_t el) {
+//     char buffer[8192];
+//     memset(buffer, 0, sizeof(buffer));
     
-    int byteRecived = recv(pollFDs[el].fd, buffer, sizeof(buffer) - 1, 0);
+//     int byteRecived = recv(pollFDs[el].fd, buffer, sizeof(buffer) - 1, 0);
     
-    if (byteRecived <= 0) {
-        // Handle connection close or error
-        return;
-    }
+//     if (byteRecived <= 0) {
+//         // Handle connection close or error
+//         return;
+//     }
     
-    buffer[byteRecived] = '\0';
-    std::string requestStr(buffer);
+//     buffer[byteRecived] = '\0';
+//     std::string requestStr(buffer);
     
-    // ✅ WALIDACJA: Sprawdź czy request jest pusty
-    if (requestStr.empty() || requestStr.find("HTTP") == std::string::npos) {
-        HttpError errorHandler;
-        std::string errorResponse = errorHandler.generateErrorResponse(400, 
-            "Empty or malformed HTTP request.");
-        send(pollFDs[el].fd, errorResponse.c_str(), errorResponse.size(), 0);
-        close(pollFDs[el].fd);
-        return;
-    }
+//     // ✅ WALIDACJA: Sprawdź czy request jest pusty
+//     if (requestStr.empty() || requestStr.find("HTTP") == std::string::npos) {
+//         HttpError errorHandler;
+//         std::string errorResponse = errorHandler.generateErrorResponse(400, 
+//             "Empty or malformed HTTP request.");
+//         send(pollFDs[el].fd, errorResponse.c_str(), errorResponse.size(), 0);
+//         close(pollFDs[el].fd);
+//         return;
+//     }
     
-    // Kontynuuj normalną obsługę...
-}
+//     // Kontynuuj normalną obsługę...
+// }
 ```
 
 ### Sprawdzanie rozmiaru payloadu (413)

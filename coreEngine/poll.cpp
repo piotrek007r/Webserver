@@ -2,6 +2,29 @@
 
 #include "CoreEngine.hpp"
 
+#include <cctype>
+
+
+void CoreEngine::failClient(size_t el, client &client, int code)
+{
+   HttpError errorHandler;
+   client.hasError = true;
+   client.sendOffset = 0;
+   client.sendBuffer = errorHandler.generateErrorResponse(code);
+   pollFDs[el].events = POLLOUT;
+   client.parser.reset();
+}
+
+void CoreEngine::failClient(size_t el, client &client, int code, const char *message)
+{
+   HttpError errorHandler;
+   client.hasError = true;
+   client.sendOffset = 0;
+   client.sendBuffer = errorHandler.generateErrorResponse(code, message);
+   pollFDs[el].events = POLLOUT;
+   client.parser.reset();
+}
+
 void CoreEngine::setConnection(size_t i)
 {
    socklen_t addrLen = sizeof(sockaddr_storage);
@@ -9,8 +32,14 @@ void CoreEngine::setConnection(size_t i)
    memset(&client.clientSockaddr, 0, sizeof(sockaddr_in));
    client.serverCfg = serversCfg[i];
    client.hasError = false;
+   client.closeAfterSend = false;
    client.sendOffset = 0;
    gettimeofday(&client.lastAction, NULL);
+
+   if (!client.serverCfg.client_max_body_size.empty()) {
+       size_t limit = std::strtoul(client.serverCfg.client_max_body_size.c_str(), NULL, 10);
+       client.parser.setMaxBodySize(limit);
+   }
 
    client.FD = accept(pollFDs[i].fd, (struct sockaddr *)&client.clientSockaddr, &addrLen);
    if (client.FD == -1)
@@ -24,12 +53,13 @@ void CoreEngine::setConnection(size_t i)
    pfd.revents = 0;
    pollFDs.push_back(pfd);
 
-   isClientFD[pollFDsNum] = true;
-   pollFDs[pollFDsNum].events = POLLIN;
-   pollFDsNum++;
+   isClientFD.push_back(true);
+   pollFDs.back().events = POLLIN;
+   pollFDsNum = pollFDs.size();
    this->clientVec.push_back(client);
-   std::cout << "socket: " << pollFDs[i].fd << " ready to connect" << std::endl;
+   // std::cout << "socket: " << pollFDs[i].fd << " ready to connect (client FD: " << client.FD << ")" << std::endl;
 }
+
 
 void CoreEngine::recivNClose(size_t el)
 {
@@ -37,8 +67,11 @@ void CoreEngine::recivNClose(size_t el)
    gettimeofday(&client.lastAction, NULL);
 
    HttpError errorHandler;
-
    client.byteRecived = recv(pollFDs[el].fd, client.inputBuffer, sizeof(client.inputBuffer), 0);
+
+   if (client.byteRecived > 0) {
+       // std::cout << "DEBUG: recv() read " << client.byteRecived << " bytes from fd " << pollFDs[el].fd << std::endl;
+   }
 
    if (client.byteRecived < 0)
    {
@@ -55,100 +88,61 @@ void CoreEngine::recivNClose(size_t el)
       return;
    }
 
-   client.leftooverBuffer.append(client.inputBuffer, client.byteRecived);
-
-
-   std::string &temp = client.leftooverBuffer;
-   size_t begin = 0;
-
-   while (true)
-   {
-      size_t end = temp.find("\r\n\r\n", begin);
-      if (end == std::string::npos)
-      {
-         temp.erase(0, begin);
-         break;
-      }
-
-      std::string headers = temp.substr(begin, end - begin + 4);
-
-      if (headers.find("HTTP/") == std::string::npos)
-      {
-         std::cout << "Invalid HTTP headers detected!" << std::endl;
-         client.hasError = true;
-         client.sendOffset = 0;
-         client.sendBuffer = errorHandler.generateErrorResponse(
-            400, "The request does not contain valid HTTP headers."
-         );
-         pollFDs[el].events = POLLOUT;
-         return;
-      }
-
-      size_t contentLength = 0;
-      size_t clPos = headers.find("Content-Length:");
-      if (clPos != std::string::npos)
-      {
-         clPos += 15;
-         while (clPos < headers.size() && (headers[clPos] == ' ' || headers[clPos] == '\t')) clPos++;
-         size_t clEnd = headers.find("\r\n", clPos);
-         std::string clStr = headers.substr(clPos, clEnd - clPos);
-         contentLength = static_cast<size_t>(std::strtoul(clStr.c_str(), NULL, 10));
-      }
-
-      size_t fullRequestLen = (end - begin + 4) + contentLength;
-
-      if (temp.size() - begin < fullRequestLen)
-      {
-         temp.erase(0, begin);
-         break;
-      }
-
-      std::string request = temp.substr(begin, fullRequestLen);
-      client.requestBufferVec.push_back(request);
-      begin += fullRequestLen;
+   ParseStatus::Enum status = client.parser.consume(client.inputBuffer, client.byteRecived);
+   
+   if (status == ParseStatus::Error_TooLarge) {
+       failClient(el, client, 413);
+       return;
+   } else if (status == ParseStatus::Error_InvalidFormat) {
+       failClient(el, client, 400);
+       return;
    }
 
-   if (!client.requestBufferVec.empty())
-   {
-      client.sendBuffer.clear();
-      client.sendOffset = 0;
-
-      for (size_t i = 0; i < client.requestBufferVec.size(); i++)
-         client.sendBuffer += prepareResponse(client, el, i);
-
-      client.requestBufferVec.clear();
-      pollFDs[el].events = POLLOUT;
+   while (client.parser.hasRequest()) {
+       std::string req = client.parser.extractRequest();
+       client.sendBuffer += prepareResponse(client, el, req);
+       pollFDs[el].events = POLLOUT;
    }
 }
+
 
 void CoreEngine::sendToClient(size_t el)
 {
    client &client = this->getClientByFD(pollFDs[el].fd);
-   std::cout << "actual client: " << client.FD << std::endl;
-   std::cout << "send buffer: " << client.sendBuffer << std::endl;
+   {
+      std::string::size_type eol = client.sendBuffer.find("\r\n");
+      std::string firstLine = (eol == std::string::npos) ? client.sendBuffer : client.sendBuffer.substr(0, eol);
+      // std::cout << "actual client: " << client.FD
+      //           << " | sending: " << client.sendBuffer.size() << " bytes"
+      //           << " | " << client.sendBuffer << std::endl;
+   }
    try
    {
-      int byteSend = send(pollFDs[el].fd, client.sendBuffer.c_str() + client.sendOffset,
-                          client.sendBuffer.size() - client.sendOffset, 0); // check if string functions are ok
+      int toSend = client.sendBuffer.size() - client.sendOffset;
+      int byteSend = send(pollFDs[el].fd, client.sendBuffer.c_str() + client.sendOffset, toSend, 0);
+
       if (byteSend <= 0)
       {
          std::cerr << "send() failed: " << strerror(errno) << std::endl;
-         HttpError errorHandler;
-         std::string errorResponse = errorHandler.generateErrorResponse(500);
          closeCLient(el);
          return;
       }
-      if ((0 < byteSend) && (byteSend < (int)client.sendBuffer.size()))
+
+      client.sendOffset += byteSend;
+
+      if (client.sendOffset < client.sendBuffer.size())
       {
-         client.sendOffset += byteSend;
+         // Partial send, wait for next POLLOUT
          return;
       }
-      if (client.hasError == true)
+
+      // Full send completed
+      if (client.hasError || client.closeAfterSend)
       {
          closeCLient(el);
          return;
       }
-      client.sendOffset = 0;
+
    }
    catch (const std::exception &e)
    {

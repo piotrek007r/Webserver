@@ -24,6 +24,7 @@
 #include "../configReader/config.hpp"
 #include "../errors/error.hpp"
 #include "../http/Http.hpp"
+#include "../http/RequestParser.hpp"
 
 class CoreEngine
 {
@@ -33,18 +34,30 @@ private:
             sockaddr_storage clientSockaddr;
             ServerConfig serverCfg;
             std::string sendBuffer;
-            std::string leftooverBuffer;
-            std::vector<std::string> requestBufferVec;
-            char inputBuffer[1024];
+            RequestParser parser;
+            char inputBuffer[65536];
             size_t sendOffset;
-            bool hasError;
-            int byteRecived;
+            std::string _body;
+            std::string _headers;
             int FD;
+            
+            int byteRecived;
+            size_t _maxBodySize;
+            size_t _contentLength;
+
+            bool closeAfterSend;
+            bool hasError;
+            bool _headerParsed;
+            bool _isChunked;
+            size_t _bodyStart;
+            size_t _chunkedPos; // Tracks position in chunked body
             timeval lastAction;
         }; 
         client &getClientByFD(int socketFD);
         void closeCLient(int el);
-        std::string prepareResponse(client &client, size_t el, size_t res);
+        std::string prepareResponse(client &client, size_t el, std::string rawRequest);
+        void failClient(size_t el, client &client, int code);
+        void failClient(size_t el, client &client, int code, const char *message);
         addrinfo hints;                       // base config of server
         std::vector<ServerConfig> serversCfg; // list of object parsed cfgfiles
         addrinfo *serv;

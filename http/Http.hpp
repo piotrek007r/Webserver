@@ -39,7 +39,6 @@ struct CGIinterpreter {
     std::string interpreterPath;
 };
 
-
 class Http {
     
     private:
@@ -115,7 +114,6 @@ class Http {
 
         // Response functions
         void responseBuilder();
-        void testResponseBuilder();
         void requestBilder(std::string &rawRequest);
         LocationConfig getMyConfig();
         bool isCGI();
@@ -132,9 +130,11 @@ class Http {
         void deleteFile(const std::string& filePath);
         void deleteDirectory(const std::string& dirPath);
         std::string getCGIinterpreter(const std::string& fileName);
-        void chankuj();
+        void chankuj(std::string& rawRequest);
 
-
+        void initMembers(std::string &rawRequest, ServerConfig serverData);
+        void parseQueryAndFileName();
+        void checkChunkedBodySize();
 
         void cgiResponseBuilder();
         void getResponseBuilder();
@@ -151,6 +151,7 @@ class Http {
         bool getIsError() const;
         int getStatusCode() const;
         std::string getResponse() const;
+        bool shouldClose() const;
 };
 
 #endif

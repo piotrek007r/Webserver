@@ -24,6 +24,7 @@ int main(int argc, char **argv)
 {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
+    std::signal(SIGPIPE, SIG_IGN);
 
 try
     {

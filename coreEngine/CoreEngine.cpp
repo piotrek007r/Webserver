@@ -4,7 +4,7 @@
 #include "../errors/error.hpp"
 
 CoreEngine::CoreEngine(const std::vector<ServerConfig> &serversCfg) : serversCfg(serversCfg), serv(NULL),
-   lSockNum(0), poolTimeout(1000), pollFDsNum(0), backlogNum(128), idleClientTimeout(60)
+   lSockNum(0), poolTimeout(1000), pollFDsNum(0), backlogNum(1024), idleClientTimeout(60)
 {
    memset(&hints, 0, sizeof(sockaddr_in));
    hints.ai_family = AF_UNSPEC;     // for both IP4 & IP6
@@ -50,8 +50,13 @@ void CoreEngine::setSocket(size_t i)
    if (bind(socketFD[i], serv->ai_addr, serv->ai_addrlen) == -1)
    {
       std::cerr << "bind() failed: " << strerror(errno) << std::endl;
-      close(socketFD[i]);
-      return;
+      // unsigned int i = 0;
+      // while (i < socketFD.size())
+      // {
+         close(socketFD[i]);
+      //    i++;
+      // }
+      throw (std::runtime_error("Binding socket failed, exiting."));
    }
    // last param for listen in number of connection allowed on the incoming queue
    if (listen(socketFD[i], backlogNum) == -1)

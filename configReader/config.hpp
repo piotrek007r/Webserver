@@ -8,6 +8,8 @@
 
 struct LocationConfig {
     std::string location_path;
+    bool is_regex;
+    std::string regex_pattern;
     std::string client_max_body_size;
     std::map<int, std::string> error_pages;
     std::vector<std::string> allow_methods;
@@ -20,7 +22,7 @@ struct LocationConfig {
     bool has_redirect;           // Czy lokacja ma redirect
     int redirect_code;           // 301, 302, 303, 307, 308
     std::string redirect_url;    // Docelowy URL
-    LocationConfig() : autoindex(false), has_redirect(false), redirect_code(0) {}
+    LocationConfig() : is_regex(false), autoindex(false), has_redirect(false), redirect_code(0) {}
 };
 
 struct ServerConfig {

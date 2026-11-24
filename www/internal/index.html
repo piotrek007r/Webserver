@@ -62,6 +62,17 @@
 			</div>
 			<div id="put-resp" class="response" hidden></div>
 		</section>
+		
+		<!-- POST to CGI -->
+	<section class="card" id="post-cgi-card">
+		<h2>POST to CGI</h2>
+		<div class="row">
+			<input id="cgi-path" type="text" value="/test/get_date.py" placeholder="/test/get_date.py" />
+			<input id="cgi-data" type="text" value="test_param=hello&name=world" placeholder="query params or raw data" />
+			<button class="btn" id="btn-post-cgi">POST to CGI</button>
+		</div>
+		<div id="post-cgi-resp" class="response" hidden></div>
+	</section>
 
 		<!-- DELETE -->
 		<section class="card" id="delete-card">
@@ -249,6 +260,25 @@
 				}
 			} catch (e) {
 				console.error('Fetch error:', e);
+				showResp(respBox, false, `Error: ${e.message}`);
+			}
+		});
+
+		// POST to CGI – wysyłamy zwykły POST bez multipart
+		document.getElementById('btn-post-cgi').addEventListener('click', async () => {
+			const data = (document.getElementById('cgi-data').value || '').trim();
+			let path = (document.getElementById('cgi-path').value || '').trim();
+			const respBox = document.getElementById('post-cgi-resp');
+			if (!path.startsWith('/')) path = '/' + path;
+			try {
+				const res = await fetch(path, { 
+					method: 'POST', 
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body: data || 'timestamp=' + Date.now()
+				});
+				const body = await res.text();
+				showResp(respBox, res.ok, `Status: ${res.status} ${res.statusText}\n\n${body}`);
+			} catch (e) {
 				showResp(respBox, false, `Error: ${e.message}`);
 			}
 		});

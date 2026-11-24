@@ -6,6 +6,8 @@
 #include <ctime>
 #include <fcntl.h>
 #include <unistd.h>
+#include <regex.h>
+#include <algorithm>
 
 static bool extractBoundary(const std::string& contentType, std::string& boundaryOut);
 static bool parseMultipartFilePart(const std::string& body,
@@ -13,26 +15,61 @@ static bool parseMultipartFilePart(const std::string& body,
                                    MultipartFile& out,
                                    const std::string& fieldName);
 
+static bool regexMatch(const std::string &pattern, const std::string &text)
+{
+    regex_t re;
+    if (regcomp(&re, pattern.c_str(), REG_EXTENDED) != 0)
+        return false;
+    int rc = regexec(&re, text.c_str(), 0, NULL, 0);
+    regfree(&re);
+    return rc == 0;
+}
+
+static void applyLocationOverride(LocationConfig &base, const LocationConfig &over)
+{
+    if (!over.client_max_body_size.empty()) base.client_max_body_size = over.client_max_body_size;
+    if (!over.index.empty()) base.index = over.index;
+    if (!over.upload_dir.empty()) base.upload_dir = over.upload_dir;
+    if (!over.scripts_path.empty()) base.scripts_path = over.scripts_path;
+    if (!over.root.empty()) base.root = over.root;
+    if (!over.allow_methods.empty()) {
+        for (unsigned int i = 0; i < over.allow_methods.size(); ++i)
+                    base.allow_methods.push_back(over.allow_methods[i]);}
+    for (std::map<std::string, std::string>::const_iterator it = over.interpreters.begin(); it != over.interpreters.end(); ++it)
+        base.interpreters[it->first] = it->second;
+    if (!over.error_pages.empty()) base.error_pages = over.error_pages;
+    if (over.has_redirect) { base.has_redirect = true; base.redirect_code = over.redirect_code; base.redirect_url = over.redirect_url; }
+}
+
 // Constructor
 Http::Http (std::string &rawRequest, ServerConfig serverData){
+    initMembers(rawRequest, serverData);
+    // std::cout << GREEN << rawRequest << RESET << std::endl;
+    requestBilder(rawRequest);
 
-    // Initialize primitive types
+    _myConfig = getMyConfig();
+    parseQueryAndFileName();
+    
+    // Initialize HttpError with server or location-specific error pages
+    _httpError = HttpError(_myConfig.error_pages);
+
+    checkChunkedBodySize();
+    if (_s_responseData._hasError) return;
+
+    responseBuilder();
+}
+
+void Http::initMembers(std::string &rawRequest, ServerConfig serverData) {
     _rawRequestPtr = NULL;
     _bodyStart = 0;
     _bodyLen = 0;
     
-
-    //std::cout << "Debug: Entering Http constructor" << std::endl;
-
     _rawRequestPtr = &rawRequest;
     _serverData = serverData;
-    
-    requestBilder(rawRequest);
+}
 
-    // Get location-specific configuration
-    // _myConfig = 0;
-    _myConfig = getMyConfig();
-        size_t queryPos = _s_requestData._request.find('?');
+void Http::parseQueryAndFileName() {
+    size_t queryPos = _s_requestData._request.find('?');
     if (queryPos != std::string::npos) {
         _s_requestData._queryString =  _s_requestData._request.substr(queryPos + 1);
         _s_requestData._fileName = _s_requestData._request.substr(0, queryPos);
@@ -40,25 +77,21 @@ Http::Http (std::string &rawRequest, ServerConfig serverData){
     else {
         _s_requestData._fileName = _s_requestData._request;
     }
-    while (_s_requestData._fileName[0] == '/')
-    _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
-    
-    // Debug - sprawdź wartości po getMyConfig()
-    std::cout << YELLOW << "DEBUG _myConfig.has_redirect: " << _myConfig.has_redirect << RESET << std::endl;
-    std::cout << YELLOW << "DEBUG _myConfig.redirect_url: '" << _myConfig.redirect_url << "'" << RESET << std::endl;
-    std::cout << YELLOW << "DEBUG _myConfig.redirect_code: " << _myConfig.redirect_code << RESET << std::endl;
-    
-    // Initialize HttpError with server or location-specific error pages
-    _httpError = HttpError(_myConfig.error_pages);
-
-    responseBuilder();
-    //testResponseBuilder();
-    std::cout << GREEN << "Debug: Exiting Http constructor" << std::endl;
-    std::cout << _s_responseData._response << RESET << std::endl;
+    while (!_s_requestData._fileName.empty() && _s_requestData._fileName[0] == '/')
+        _s_requestData._fileName = _s_requestData._fileName.substr(1, _s_requestData._fileName.length() - 1); // Remove leading '/'
 }
-void Http::chankuj() 
+
+void Http::checkChunkedBodySize() {
+    if (_s_requestData._headers["Transfer-Encoding"] == "chunked") {
+        if (!isBodySizeAllowed()) {
+            _s_responseData._hasError = true;
+            _s_responseData._responseStatusCode = 413;
+            _s_responseData._response = _httpError.generateErrorResponse(413);
+        }
+    }
+}
+void Http::chankuj(std::string& rawRequest) 
  {
-    std::string rawRequest = *_rawRequestPtr;
     std::string unchunkedBody;
     size_t pos = _bodyStart;
 
@@ -97,7 +130,7 @@ void Http::requestBilder(std::string &rawRequest)
     parseRequest(rawRequest);
     parseHeader();
     if (_s_requestData._headers["Transfer-Encoding"] == "chunked")
-        chankuj();
+        chankuj(rawRequest);
 }
 
 // Parse HTTP request
@@ -145,6 +178,7 @@ void Http::parseHeader() {
     }
 
     // Parse headers
+    // std::cout << CYAN << "=== INCOMING REQUEST HEADERS ===" << RESET << std::endl;
     while (std::getline(stream, line)) {
         if (line == "\r" || line.empty()) {
             break; // End of headers
@@ -157,16 +191,28 @@ void Http::parseHeader() {
             std::string key = line.substr(0, delimiterPos);
             std::string value = line.substr(delimiterPos + 2);
             _s_requestData._headers[key] = value;
+            // std::cout << CYAN << key << ": " << value << RESET << std::endl;
         }
     }
+    // std::cout << CYAN << "=== END HEADERS ===" << RESET << std::endl;
 }
 
 bool Http::isBodySizeAllowed() {
+    if (_myConfig.client_max_body_size.empty()) {
+        return true;
+    }
+    
+    size_t maxBodySize = static_cast<size_t>(std::atoi(_myConfig.client_max_body_size.c_str()));
     std::map<std::string, std::string>::iterator it = _s_requestData._headers.find("Content-Length");
+    
     if (it != _s_requestData._headers.end()) {
         size_t contentLength = static_cast<size_t>(std::atoi(it->second.c_str()));
-        size_t maxBodySize = static_cast<size_t>(std::atoi(_myConfig.client_max_body_size.c_str()));
         if (contentLength > maxBodySize) {
+            return false;
+        }
+    } else {
+        // For chunked encoding or when Content-Length is missing, check the actual body size
+        if (_bodyLen > maxBodySize) {
             return false;
         }
     }
@@ -188,13 +234,14 @@ std::string Http::getCGIinterpreter(const std::string& fileName) {
 
 // Build CGI response
 void Http::cgiResponseBuilder() {
+    std::cout << "DEBUG: Starting CGI response build for " << _s_requestData._fileName << std::endl;
 
     std::string scriptPath = _myConfig.scripts_path +_s_requestData._fileName;
     std::string cgiInterpreter = getCGIinterpreter(_s_requestData._fileName);
-    if (!resourceExists(scriptPath)) {
-        sendError(404);
-        return;
-    }
+    // if (!resourceExists(scriptPath)) {
+    //     sendError(404);
+    //     return;
+    // }
     
     std::string body;
     if (_rawRequestPtr != NULL && _bodyLen > 0) {
@@ -220,11 +267,10 @@ void Http::cgiResponseBuilder() {
     envVars["SERVER_SOFTWARE"] = "WebServer/1.0";
     envVars["QUERY_STRING"] = _s_requestData._queryString;
     envVars["SERVER_PROTOCOL"] = _s_requestData._httpVersion;
+    envVars["REQUEST_URI"] = _s_requestData._uri;
     envVars["PATH_INFO"] = _s_requestData._uri;
-    envVars["SCRIPT_NAME"] = _s_requestData._fileName;
-
-    if (envVars["PATH_INFO"][0] != '/')
-        envVars["PATH_INFO"] = "/" + envVars["PATH_INFO"];
+    envVars["SCRIPT_NAME"] = _s_requestData._uri;
+    envVars["PATH_TRANSLATED"] = scriptPath;
     
     if (!body.empty()) {
         std::ostringstream oss;
@@ -241,9 +287,6 @@ void Http::cgiResponseBuilder() {
     for (std::map<std::string, std::string>::iterator it = _s_requestData._headers.begin();
          it != _s_requestData._headers.end(); ++it)
          {
-            if (it ->first == "Host" && it ->second[it ->second.length() - 1] != '/')
-                it ->second = it ->second + "/"; 
-
         std::string key = "HTTP_" + it->first;
         for (size_t i = 0; i < key.length(); ++i) {
             if (key[i] == '-') key[i] = '_';
@@ -267,16 +310,16 @@ void Http::getResponseBuilder() {
 
     std::string fullPath = _myConfig.root + _s_requestData._fileName;
     
-    std::cout << "Handling GET for filePath: " << _s_requestData._fileName << std::endl;
+    // std::cout << "Handling GET for filePath: " << _s_requestData._fileName << std::endl;
     if (resourceExists(fullPath)) {
         if (isDirectory(fullPath) && _s_requestData._fileName.empty() && _myConfig.index.empty()) {
-            std::cout << "Serving directory: " << _s_requestData._fileName << std::endl;
+            // std::cout << "Serving directory: " << _s_requestData._fileName << std::endl;
             generateDirectoryListing(fullPath);
         } else if (isFile(fullPath)) {
-            std::cout << "Serving file: " << _s_requestData._fileName << std::endl;
+            // std::cout << "Serving file: " << _s_requestData._fileName << std::endl;
             handleFile(fullPath);
         } else {
-            std::cout << "Serving static file: " << _s_requestData._fileName << std::endl;
+            // std::cout << "Serving static file: " << _s_requestData._fileName << std::endl;
             if (fullPath[fullPath.length() - 1] != '/')
                 fullPath += "/";
             handleFile(fullPath + _myConfig.index);
@@ -405,7 +448,7 @@ void Http::handleFile(const std::string& filePath) {
     response << "HTTP/1.1 200 OK\r\n"
              << "Content-Type: " << mimeType << "\r\n"
              << "Content-Length: " << body.length() << "\r\n"
-             << "Connection: close\r\n"
+             << "Connection: keep-alive\r\n"
              << "\r\n"
              << body;
     
@@ -454,7 +497,7 @@ void Http::generateDirectoryListing(const std::string& dirPath) {
     response << "HTTP/1.1 200 OK\r\n"
              << "Content-Type: text/html\r\n"
              << "Content-Length: " << body.length() << "\r\n"
-             << "Connection: close\r\n"
+             << "Connection: keep-alive\r\n"
              << "\r\n"
              << body;
     
@@ -500,7 +543,7 @@ void Http::putResponseBuilder() {
         response << "HTTP/1.1 200 OK\r\n"
                  << "Content-Type: text/html\r\n"
                  << "Content-Length: " << respBody.size() << "\r\n"
-                 << "Connection: close\r\n"
+                 << "Connection: keep-alive\r\n"
                  << "\r\n"
                  << respBody;
 
@@ -566,7 +609,7 @@ void Http::putResponseBuilder() {
     response << "HTTP/1.1 " << code << (code == 201 ? " Created" : " OK") << "\r\n"
              << "Content-Type: text/html\r\n"
              << "Content-Length: " << respBody.size() << "\r\n"
-             << "Connection: close\r\n"
+             << "Connection: keep-alive\r\n"
              << "\r\n"
              << respBody;
 
@@ -595,7 +638,7 @@ void Http::postResponseBuilder() {
         response << "HTTP/1.1 200 OK\r\n"
                  << "Content-Type: text/html\r\n"
                  << "Content-Length: " << respBody.size() << "\r\n"
-                 << "Connection: close\r\n"
+                 << "Connection: keep-alive\r\n"
                  << "\r\n"
                  << respBody;
 
@@ -659,7 +702,7 @@ void Http::postResponseBuilder() {
     response << "HTTP/1.1 201 Created\r\n"
              << "Content-Type: text/html\r\n"
              << "Content-Length: " << respBody.size() << "\r\n"
-             << "Connection: close\r\n"
+             << "Connection: keep-alive\r\n"
              << "\r\n"
              << respBody;
 
@@ -802,14 +845,14 @@ void Http::responseBuilder() {
         return;
     }
 
-    if (isCGI()) {
-        cgiResponseBuilder();
-        return;
-    }
-   if (!isMethodAllowed()) {
+    if (!isMethodAllowed()) {
         _s_responseData._hasError = true;
         _s_responseData._responseStatusCode = 405;
         _s_responseData._response = _httpError.generateErrorResponse(405);
+        return;
+    }
+    if (isCGI()) {
+        cgiResponseBuilder();
         return;
     }
     
@@ -844,26 +887,35 @@ LocationConfig Http::getMyConfig() {
     myConfig.allow_methods.clear();
     myConfig.error_pages.clear();
     
-    bool locationFound = false;
-    
-    std::cout << CYAN << "DEBUG getMyConfig: URI = '" << _s_requestData._uri << "'" << RESET << std::endl;
-    
+    bool baseFound = false;
+    std::string baseKey;
+    LocationConfig baseLoc;
+    bool regexFound = false;
+    LocationConfig regexLoc;
+
     for (std::map<std::string, LocationConfig>::iterator it = _serverData.locations.begin();
          it != _serverData.locations.end(); ++it) {
-        std::cout << CYAN << "DEBUG: Checking location '" << it->first << "'" << RESET << std::endl;
+        const LocationConfig &loc = it->second;
+
+        if (loc.is_regex) {
+            if (!loc.regex_pattern.empty() && regexMatch(loc.regex_pattern, _s_requestData._uri)) {
+                if (!regexFound) { 
+                    regexFound = true; 
+                    regexLoc = loc;}
+            }
+            continue;
+        }
+
         if (_s_requestData._uri.find(it->first) == 0) {
-            std::cout << GREEN << "DEBUG: Location MATCHED! '" << it->first << "'" << RESET << std::endl;
-            myConfig = Config::getMergedLocationConfig(_serverData, it->second);
-            locationFound = true;
-            _s_requestData._request = _s_requestData._uri.substr(it->first.length());
-            std::cout << GREEN << "DEBUG: After merge - has_redirect: " << myConfig.has_redirect 
-                      << ", redirect_url: '" << myConfig.redirect_url << "'"
-                      << ", redirect_code: " << myConfig.redirect_code << RESET << std::endl;
-            break;
+            if (!baseFound || it->first.length() > baseKey.length()) {
+                baseFound = true;
+                baseKey = it->first;
+                baseLoc = loc;
+            }
         }
     }
-    if (!locationFound) {
-        _s_requestData._request = _s_requestData._uri;
+
+    if (!baseFound) {
         myConfig.root = _serverData.root;
         myConfig.allow_methods = _serverData.allow_methods;
         myConfig.index = _serverData.index;
@@ -874,8 +926,31 @@ LocationConfig Http::getMyConfig() {
         myConfig.redirect_code = _serverData.redirect_code;
         myConfig.upload_dir = _serverData.upload_dir;
         myConfig.interpreters = _serverData.interpreters;
+        myConfig.scripts_path = _serverData.scripts_path;
         myConfig.error_pages = _serverData.error_pages;
+        _s_requestData._request = _s_requestData._uri;
+    } else {
+        myConfig = Config::getMergedLocationConfig(_serverData, baseLoc);
+        if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri[baseKey.length()] == '/')
+            _s_requestData._request = _s_requestData._uri.substr(baseKey.length());
+        else if (_s_requestData._uri.find(baseKey) == 0 && _s_requestData._uri.length() != baseKey.length())
+            _s_requestData._request = _s_requestData._uri;
     }
+
+    if (regexFound)
+        applyLocationOverride(myConfig, regexLoc);
+
+    if (!myConfig.location_path.empty() && myConfig.location_path[myConfig.location_path.length() - 1] == '/')
+        myConfig.location_path.erase(myConfig.location_path.length() - 1);
+
+    if (!myConfig.location_path.empty() && myConfig.location_path[0] != '/' && !myConfig.is_regex)
+        myConfig.location_path = "/" + myConfig.location_path;
+
+    if (myConfig.location_path.empty() && baseFound)
+        myConfig.location_path = baseKey;
+
+    if (myConfig.location_path.empty() && !baseFound)
+        myConfig.location_path = "";
     return myConfig;
 }
 
@@ -884,6 +959,8 @@ bool Http::getIsError() const { return _s_responseData._hasError; }
 int Http::getStatusCode() const { return _s_responseData._responseStatusCode; }
 
 std::string Http::getResponse() const { return _s_responseData._response; }
+
+bool Http::shouldClose() const { return _s_requestData._headers.count("Connection") && _s_requestData._headers.at("Connection") == "close"; }
 
 static std::string trim(const std::string& s) {
     size_t b = 0, e = s.size();
@@ -992,3 +1069,5 @@ static bool parseMultipartFilePart(const std::string& body,
         pos = next + 2;
     }
 }
+
+
