@@ -115,13 +115,18 @@ void CoreEngine::coreEngine()
       {
          for (size_t i = 0; i < pollFDsNum; i++)
          {
+            size_t fdsBefore = pollFDs.size();
             // only on listening sockets, after first request
             if ((pollFDs[i].revents & POLLIN) && (i < lSockNum) && !(isClientFD[i]))
                setConnection(i);
             else if (pollFDs[i].revents & POLLIN)
                recivNClose(i);
+            if (pollFDs.size() < fdsBefore) // client closed, pollFDs[i] is gone
+               continue;
             if (pollFDs[i].revents & POLLOUT)
                sendToClient(i);
+            if (pollFDs.size() < fdsBefore) // client closed, pollFDs[i] is gone
+               continue;
             if (pollFDs[i].revents & POLLHUP) // consider it coz might be unnesesary.
             {
                std::cout << "client on FD: " << pollFDs[i].fd << " has disconnected" << std::endl;
