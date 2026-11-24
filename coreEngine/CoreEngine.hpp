@@ -40,14 +40,7 @@ private:
             bool hasError;
             int byteRecived;
             int FD;
-            bool isHeader;
-            bool isChunked;
-            bool hasContentLength;
-            bool bodyComplete;
             timeval lastAction;
-            std::string fullHeader;
-            int uploadFile;
-            size_t contentLength;
         }; 
         client &getClientByFD(int socketFD);
         void closeCLient(int el);
@@ -59,14 +52,12 @@ private:
         std::vector<bool> isClientFD; // consider switching it to map
         std::vector<client> clientVec;
         std::vector<pollfd> pollFDs;
+        // pollfd *pollFDs;   // struct that holds data about socketFD, its events and responses to it
         size_t lSockNum;   // number of listening sockets
         int poolTimeout;   // time interval for poll() checking for event
         size_t pollFDsNum; // number of structs corresponding total number of sockets
         size_t backlogNum; // number of pending connection that listen can hold
         int idleClientTimeout;
-        bool appendHeader(client *client);
-        void appendChunks(client *client);
-        void appendContnent(client *client);
 
     public:
         CoreEngine(const std::vector<ServerConfig> &serverCfg);
@@ -76,7 +67,6 @@ private:
         void recivNClose(size_t i);
         void sendToClient(size_t i);
         void coreEngine();
-        std::string generatePath();
         long getTimeStamp(timeval countFrom, timeval compareTime);
         static volatile sig_atomic_t alive;
 };
